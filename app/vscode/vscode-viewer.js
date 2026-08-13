@@ -9,7 +9,11 @@ app.innerHTML = `
   </div>
 `;
 
-const viewer = new MediaViewer(document.querySelector('#viewer'));
+const viewer = new MediaViewer(document.querySelector('#viewer'), {
+  onSettingsChange(settings) {
+    vscode.postMessage({ type: 'settingsChanged', settings });
+  },
+});
 let pendingItem = null;
 
 viewer.ready()
@@ -21,7 +25,9 @@ viewer.ready()
 
 window.addEventListener('message', (event) => {
   const msg = event.data;
-  if (msg?.type === 'media') {
+  if (msg?.type === 'settings') {
+    viewer.applySettings(msg.settings);
+  } else if (msg?.type === 'media') {
     pendingItem = {
       id: msg.id,
       uri: msg.uri,

@@ -1,5 +1,6 @@
 const vscode = require('vscode');
 const MAX_READ_BYTES = 256 * 1024 * 1024;
+const SETTINGS_KEY = 'ffplayer.viewer.settings.v1';
 
 function activate(context) {
   const provider = new FFplayerMediaViewer(context);
@@ -35,6 +36,8 @@ class FFplayerMediaViewer {
     webview.onDidReceiveMessage(async (message) => {
       if (message?.type === 'ready') {
         try {
+          const settings = this.context.globalState.get(SETTINGS_KEY);
+          if (settings) await webview.postMessage({ type: 'settings', settings });
           const stat = await vscode.workspace.fs.stat(document.uri);
           webview.postMessage({
             type: 'media',
@@ -47,6 +50,8 @@ class FFplayerMediaViewer {
           console.error('Failed to stat media document', err);
           webview.postMessage({ type: 'error', message: String(err?.message ?? err) });
         }
+      } else if (message?.type === 'settingsChanged') {
+        await this.context.globalState.update(SETTINGS_KEY, message.settings);
       } else if (message?.type === 'readFile') {
         try {
           const uri = vscode.Uri.parse(message.uri);

@@ -1,5 +1,7 @@
 import { MediaViewer, reportError } from './media-viewer.js';
 
+const SETTINGS_KEY = 'ffplayer.viewer.settings.v1';
+
 const app = document.querySelector('#app');
 app.innerHTML = `
   <div class="browser-host">
@@ -20,7 +22,10 @@ app.innerHTML = `
   </div>
 `;
 
-const viewer = new MediaViewer(document.querySelector('#viewer'));
+const viewer = new MediaViewer(document.querySelector('#viewer'), {
+  settings: loadSettings(),
+  onSettingsChange: saveSettings,
+});
 const fileInput = document.querySelector('#file');
 const directoryInput = document.querySelector('#directory');
 const browserShell = document.querySelector('#browser-shell');
@@ -98,4 +103,21 @@ function formatBytes(bytes) {
     unit += 1;
   }
   return `${value.toFixed(unit ? 1 : 0)} ${units[unit]}`;
+}
+
+function loadSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+  } catch (err) {
+    reportError('Failed to load viewer settings', err);
+    return null;
+  }
+}
+
+function saveSettings(settings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch (err) {
+    reportError('Failed to save viewer settings', err);
+  }
 }

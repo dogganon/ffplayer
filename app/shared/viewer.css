@@ -165,8 +165,8 @@ input[type="range"] {
 
 .viewer-bar {
   display: grid;
-  grid-template-areas: "play stop back timeline forward time speed scale status";
-  grid-template-columns: auto auto auto minmax(140px, 1fr) auto auto auto minmax(110px, 132px) minmax(120px, 1fr);
+  grid-template-areas: "play stop back timeline forward time speed autoplay autoloop view scale status";
+  grid-template-columns: auto auto auto minmax(140px, 1fr) auto auto auto auto auto auto minmax(110px, 132px) minmax(120px, 1fr);
   gap: 6px;
   align-items: center;
   padding: 6px 8px;
@@ -180,6 +180,9 @@ input[type="range"] {
 .viewer-bar .step-forward { grid-area: forward; }
 .viewer-bar .time { grid-area: time; }
 .viewer-bar .speed-control { grid-area: speed; }
+.viewer-bar .autoplay-control { grid-area: autoplay; }
+.viewer-bar .autoloop-control { grid-area: autoloop; }
+.viewer-bar .view-mode-control { grid-area: view; }
 .viewer-bar .tile-control { grid-area: scale; }
 
 .viewer-bar .status {
@@ -223,6 +226,32 @@ input[type="range"] {
   max-width: none;
   field-sizing: content;
   overflow: visible;
+}
+
+.checkbox-control {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.checkbox-control input {
+  margin: 0;
+}
+
+.select-control {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px;
+  align-items: center;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.select-control select {
+  min-width: 0;
+  font: inherit;
 }
 
 .tile-control {
@@ -288,7 +317,7 @@ input[type="range"] {
   overflow: auto;
   padding: 8px;
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-rows: max-content max-content;
   align-content: start;
   gap: 8px;
 }
@@ -349,12 +378,13 @@ input[type="range"] {
 .tracks {
   display: grid;
   gap: 8px;
-  min-height: 0;
+  min-height: min-content;
   align-items: start;
 }
 
 .video-tracks {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--tile-min)), 1fr));
+  min-width: 0;
   overflow: visible;
 }
 
@@ -385,6 +415,8 @@ input[type="range"] {
 
 .video-tracks .track {
   max-width: var(--tile-max);
+  min-width: 0;
+  overflow: hidden;
 }
 
 .track-head {
@@ -411,19 +443,41 @@ input[type="range"] {
 
 .video-frame {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   background: #000;
   display: grid;
   place-items: center;
   overflow: hidden;
 }
 
-canvas {
+.video-frame canvas {
+  min-width: 0;
   max-width: 100%;
-  max-height: 100%;
   width: 100%;
-  height: 100%;
-  object-fit: contain;
+  height: auto;
   display: block;
+}
+
+[data-video-fit="page"] .video-frame {
+  max-height: calc(100vh - 160px);
+  max-height: calc(100dvh - 160px);
+}
+
+[data-video-fit="page"] .video-frame canvas {
+  width: auto;
+  max-height: calc(100vh - 160px);
+  max-height: calc(100dvh - 160px);
+}
+
+[data-video-fit="actual"] .video-frame {
+  place-items: start;
+  overflow: auto;
+}
+
+[data-video-fit="actual"] .video-frame canvas {
+  width: auto;
+  max-width: none;
 }
 
 .audio-meter {
@@ -495,9 +549,9 @@ canvas {
 @media (max-width: 1100px) {
   .viewer-bar {
     grid-template-areas:
-      "play stop back forward time speed scale"
-      "timeline timeline timeline timeline status status status";
-    grid-template-columns: auto auto auto auto auto auto minmax(110px, 132px);
+      "play stop back forward time speed autoplay autoloop scale"
+      "timeline timeline timeline timeline view view status status status";
+    grid-template-columns: auto auto auto auto auto auto auto auto minmax(110px, 132px);
   }
 }
 
@@ -541,7 +595,8 @@ canvas {
     grid-template-areas:
       "play stop back forward"
       "timeline timeline timeline timeline"
-      "time speed scale scale";
+      "time speed autoplay autoloop"
+      "view view scale scale";
     grid-template-columns: repeat(4, minmax(0, 1fr));
     align-items: center;
   }

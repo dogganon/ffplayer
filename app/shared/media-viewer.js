@@ -1,10 +1,12 @@
 let audioContext = null;
 
 export class MediaViewer {
-  constructor(root) {
+  constructor(root, options = {}) {
     this.root = root;
     this.player = null;
     this.av = null;
+    this.settings = normalizeSettings(options.settings);
+    this.onSettingsChange = typeof options.onSettingsChange === 'function' ? options.onSettingsChange : null;
     this.root.innerHTML = `
       <div class="viewer-bar">
         <button class="play" type="button" disabled title="Play or pause">Play</button>
@@ -18,9 +20,25 @@ export class MediaViewer {
           <input class="playback-rate" type="number" step="0.05" value="1" disabled inputmode="decimal" aria-label="Playback speed">
           <span aria-hidden="true">x</span>
         </label>
+        <label class="checkbox-control autoplay-control">
+          <input class="autoplay" type="checkbox">
+          <span>Autoplay</span>
+        </label>
+        <label class="checkbox-control autoloop-control">
+          <input class="autoloop" type="checkbox">
+          <span>Loop</span>
+        </label>
+        <label class="select-control view-mode-control">
+          <span>View</span>
+          <select class="view-mode" aria-label="Video sizing mode">
+            <option value="width">Fit width</option>
+            <option value="page">Fit page</option>
+            <option value="actual">Actual size</option>
+          </select>
+        </label>
         <label class="range-control tile-control" title="Tile size">
           <span>Tiles</span>
-          <input class="tile-scale" type="range" min="180" max="640" step="20" value="260" aria-label="Tile size">
+          <input class="tile-scale" type="range" min="180" max="640" step="20" value="180" aria-label="Tile size">
         </label>
         <div class="status" aria-live="polite"></div>
       </div>
@@ -41,6 +59,9 @@ export class MediaViewer {
       stepForward: this.root.querySelector('.step-forward'),
       time: this.root.querySelector('.time'),
       playbackRate: this.root.querySelector('.playback-rate'),
+      autoplay: this.root.querySelector('.autoplay'),
+      autoloop: this.root.querySelector('.autoloop'),
+      viewMode: this.root.querySelector('.view-mode'),
       tileScale: this.root.querySelector('.tile-scale'),
       status: this.root.querySelector('.status'),
       shell: this.root.querySelector('.viewer-shell'),
@@ -57,12 +78,74 @@ export class MediaViewer {
     this.els.stepBack.addEventListener('click', () => this.player?.seekBy(-5));
     this.els.stepForward.addEventListener('click', () => this.player?.seekBy(5));
     this.els.timeline.addEventListener('input', () => this.player?.seek(Number(this.els.timeline.value)));
-    this.els.playbackRate.addEventListener('change', () => this.player?.setPlaybackRate(Number(this.els.playbackRate.value)));
-    this.els.tileScale.addEventListener('input', () => {
-      const size = Number(this.els.tileScale.value);
-      this.root.style.setProperty('--tile-min', `${size}px`);
-      this.root.style.setProperty('--tile-max', `${Math.max(size, Math.round(size * 1.75))}px`);
+    this.els.playbackRate.addEventListener('change', () => {
+      const rate = Number(this.els.playbackRate.value);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        this.els.playbackRate.value = String(this.settings.playbackRate);
+        return;
+      }
+      this.settings.playbackRate = rate;
+      this.persistSettings();
+      this.player?.setPlaybackRate(rate);
     });
+    this.els.autoplay.addEventListener('change', () => {
+      this.settings.autoplay = this.els.autoplay.checked;
+      this.persistSettings();
+    });
+    this.els.autoloop.addEventListener('change', () => {
+      this.settings.autoloop = this.els.autoloop.checked;
+      this.persistSettings();
+    });
+    this.els.viewMode.addEventListener('change', () => {
+      this.settings.viewMode = normalizeViewMode(this.els.viewMode.value);
+      this.applyViewMode();
+      this.persistSettings();
+    });
+    this.els.tileScale.addEventListener('input', () => {
+      this.settings.tileScale = clamp(
+        Number(this.els.tileScale.value),
+        Number(this.els.tileScale.min),
+        Number(this.els.tileScale.max),
+      );
+      this.applyTileScale();
+      this.persistSettings();
+    });
+    this.resumeAudio = () => this.player?.resumeAudio();
+    this.root.addEventListener('pointerdown', this.resumeAudio, true);
+    this.root.addEventListener('keydown', this.resumeAudio, true);
+    this.els.playbackRate.value = String(this.settings.playbackRate);
+    this.els.autoplay.checked = this.settings.autoplay;
+    this.els.autoloop.checked = this.settings.autoloop;
+    this.els.viewMode.value = this.settings.viewMode;
+    this.els.tileScale.value = String(this.settings.tileScale);
+    this.applyViewMode();
+    this.applyTileScale();
+  }
+
+  applySettings(settings) {
+    this.settings = normalizeSettings(settings);
+    this.els.playbackRate.value = String(this.settings.playbackRate);
+    this.els.autoplay.checked = this.settings.autoplay;
+    this.els.autoloop.checked = this.settings.autoloop;
+    this.els.viewMode.value = this.settings.viewMode;
+    this.els.tileScale.value = String(this.settings.tileScale);
+    this.applyViewMode();
+    this.applyTileScale();
+    this.player?.setPlaybackRate(this.settings.playbackRate);
+  }
+
+  applyTileScale() {
+    const size = this.settings.tileScale;
+    this.root.style.setProperty('--tile-min', `${size}px`);
+    this.root.style.setProperty('--tile-max', `${Math.max(size, Math.round(size * 1.75))}px`);
+  }
+
+  applyViewMode() {
+    this.root.dataset.videoFit = this.settings.viewMode;
+  }
+
+  persistSettings() {
+    this.onSettingsChange?.(settingsSnapshot(this.settings));
   }
 
   async ready() {
@@ -87,6 +170,14 @@ export class MediaViewer {
       this.player = new StreamingPlayer(this, session, item);
       this.player.mount();
       this.setControlsEnabled(true);
+      if (this.settings.autoplay) {
+        try {
+          await this.player.play();
+        } catch (err) {
+          reportError('Autoplay failed', err);
+          this.setStatus('Autoplay was blocked. Press Play to start.', true);
+        }
+      }
     } catch (err) {
       reportError('Failed to open media', err);
       this.setStatus(String(err?.message ?? err), true);
@@ -112,6 +203,8 @@ export class MediaViewer {
   }
 
   destroy() {
+    this.root.removeEventListener('pointerdown', this.resumeAudio, true);
+    this.root.removeEventListener('keydown', this.resumeAudio, true);
     this.player?.destroy();
     this.av?.delete();
   }
@@ -279,7 +372,7 @@ class StreamingPlayer {
     this.generation = 0;
     this.audioSources = [];
     this.duration = Number.isFinite(this.info.durationSeconds) && this.info.durationSeconds > 0 ? this.info.durationSeconds : 0;
-    this.playbackRate = 1;
+    this.playbackRate = viewer.settings.playbackRate;
   }
 
   mount() {
@@ -335,15 +428,24 @@ class StreamingPlayer {
     }
   }
 
-  async play() {
+  play() {
     audioContext ||= new AudioContext();
-    await audioContext.resume();
     this.playing = true;
     this.startWall = performance.now() / 1000 - this.offset / this.playbackRate;
+    this.resumeAudio();
     this.scheduleAudio();
     this.pump();
     this.tick();
     this.updateControls();
+  }
+
+  resumeAudio() {
+    if (!audioContext || audioContext.state === 'running' || audioContext.state === 'closed') return;
+    audioContext.resume()
+      .then(() => {
+        if (this.playing) this.scheduleAudio();
+      })
+      .catch((err) => reportError('Failed to resume audio', err));
   }
 
   pause() {
@@ -412,13 +514,15 @@ class StreamingPlayer {
     for (const track of this.tracks.values()) track.render(t);
     this.updateControls();
     if (this.duration && this.offset >= this.duration) {
-      this.stop();
+      if (this.viewer.settings.autoloop) this.seek(0);
+      else this.stop();
       return;
     }
     this.raf = requestAnimationFrame(() => this.tick());
   }
 
   scheduleAudio() {
+    if (!audioContext || audioContext.state !== 'running') return;
     const playbackTime = this.currentPlaybackTime();
     for (const track of this.tracks.values()) {
       if (track.stream.type !== 'audio') continue;
@@ -566,9 +670,6 @@ function streamCard(stream) {
     media = document.createElement('div');
     media.className = 'video-frame';
     const canvas = document.createElement('canvas');
-    if (stream.width && stream.height) {
-      media.style.aspectRatio = `${stream.width} / ${stream.height}`;
-    }
     media.append(canvas);
   } else {
     media = document.createElement('div');
@@ -721,4 +822,33 @@ function pad(value) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+}
+
+function normalizeSettings(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const playbackRate = Number(source.playbackRate);
+  const tileScale = Number(source.tileScale);
+  return {
+    version: 1,
+    playbackRate: Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1,
+    autoplay: Boolean(source.autoplay),
+    autoloop: Boolean(source.autoloop),
+    viewMode: normalizeViewMode(source.viewMode),
+    tileScale: Number.isFinite(tileScale) ? clamp(tileScale, 180, 640) : 180,
+  };
+}
+
+function settingsSnapshot(settings) {
+  return {
+    version: 1,
+    playbackRate: settings.playbackRate,
+    autoplay: settings.autoplay,
+    autoloop: settings.autoloop,
+    viewMode: settings.viewMode,
+    tileScale: settings.tileScale,
+  };
+}
+
+function normalizeViewMode(value) {
+  return ['width', 'page', 'actual'].includes(value) ? value : 'width';
 }
