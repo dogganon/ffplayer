@@ -1,0 +1,7 @@
+[submodule "app/wasm/thirdparty/ffmpeg"]
+	path = app/wasm/thirdparty/ffmpeg
+	url = https://code.ffmpeg.org/ffmpeg/ffmpeg.git
+
+[submodule "app/wasm/thirdparty/dav1d"]
+	path = app/wasm/thirdparty/dav1d
+	url = https://code.videolan.org/videolan/dav1d.git

@@ -1,0 +1,29 @@
+name: Build ffplayer
+description: Set up conda, check sources, build Wasm assets, and verify dist outputs.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup conda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        activate-environment: ./.conda
+        environment-file: environment.yml
+        auto-activate-base: false
+
+    - name: Check
+      shell: bash -el {0}
+      run: npm run check
+
+    - name: Build
+      shell: bash -el {0}
+      run: npm run build
+
+    - name: Verify dist assets
+      shell: bash -el {0}
+      run: |
+        test -f app/browser/dist/index.html
+        test -f app/browser/dist/ffplayer.mjs
+        test -f app/browser/dist/ffplayer.wasm
+        test -f app/vscode/dist/ffplayer.mjs
+        test -f app/vscode/dist/ffplayer.wasm

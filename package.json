@@ -1,0 +1,17 @@
+{
+  "name": "ffplayer-monorepo",
+  "private": true,
+  "workspaces": [
+    "app/browser",
+    "app/vscode",
+    "app/wasm"
+  ],
+  "scripts": {
+    "check": "npm run check --workspaces --if-present",
+    "build": "npm run build -w @ffplayer/wasm",
+    "serve": "npm run serve -w @ffplayer/browser",
+    "clean": "npm run clean --workspaces --if-present",
+    "vscode:package": "npm run package -w app/vscode",
+    "vscode:publish": "npm run vscode:publish -w app/vscode"
+  }
+}

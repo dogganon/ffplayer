@@ -1,0 +1,21 @@
+channels:
+  - conda-forge
+
+dependencies:
+  # Native C++ / Python build
+  - python>=3.11
+  - cxx-compiler
+  - cmake>=3.20
+  - ninja
+  - meson
+  - make
+  - pkg-config
+  - ffmpeg=8.*
+  - pybind11
+
+  # Browser / WebAssembly build
+  - emscripten
+  - nodejs
+
+  # Building FFmpeg for Wasm
+  - git

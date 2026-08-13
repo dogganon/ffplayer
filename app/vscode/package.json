@@ -1,0 +1,49 @@
+{
+  "name": "ffplayer",
+  "displayName": "ffplayer",
+  "description": "FFmpeg-backed media viewer for VS Code.",
+  "version": "0.1.0-alpha.0",
+  "publisher": "ffplayer",
+  "preview": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCustomEditor:ffplayer.mediaViewer"
+  ],
+  "main": "./extension.js",
+  "files": [
+    "README.md",
+    "extension.js",
+    "dist/**"
+  ],
+  "scripts": {
+    "check": "node --check extension.js && node --check vscode-viewer.js",
+    "check:dist": "test -f dist/ffplayer.mjs && test -f dist/ffplayer.wasm && test -f dist/media-viewer.js && test -f dist/viewer.css && test -f dist/vscode-viewer.js",
+    "vscode:prepublish": "npm run check:dist",
+    "package": "npm run check:dist && mkdir -p dist-package && npx --yes @vscode/vsce package --pre-release --no-dependencies --allow-missing-repository --skip-license --out dist-package/ffplayer-0.1.0-alpha.0.vsix",
+    "vscode:publish": "npm run check:dist && npx --yes @vscode/vsce publish --pre-release --no-dependencies --allow-missing-repository --skip-license -p \"$VSCE_PAT\"",
+    "clean": "rm -rf dist dist-package"
+  },
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "ffplayer.mediaViewer",
+        "displayName": "ffplayer",
+        "selector": [
+          {
+            "filenamePattern": "*.{3g2,3gp,aac,ac3,aiff,ape,asf,avi,avif,av1,caf,dts,dv,f4v,flac,flv,m2ts,m4a,m4v,mka,mkv,mov,mp2,mp3,mp4,mpeg,mpg,mts,mxf,oga,ogg,ogm,ogv,opus,ts,vob,wav,webm,wma,wmv}"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
+  }
+}

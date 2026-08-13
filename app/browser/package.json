@@ -1,0 +1,10 @@
+{
+  "name": "@ffplayer/browser",
+  "private": true,
+  "scripts": {
+    "check": "node --check browser-viewer.js",
+    "serve": "emrun --port ${PORT:-8000} dist/index.html",
+    "serve:no-open": "emrun --no-browser --port ${PORT:-8000} dist/index.html",
+    "clean": "rm -rf dist"
+  }
+}

@@ -1,0 +1,35 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build
+        uses: ./.github/actions/build
+
+      - name: Upload browser dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-dist
+          path: app/browser/dist/
+
+      - name: Upload vscode dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-dist
+          path: app/vscode/dist/

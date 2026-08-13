@@ -1,0 +1,11 @@
+{
+  "name": "@ffplayer/wasm",
+  "private": true,
+  "scripts": {
+    "check": "bash -n scripts/build_dav1d_wasm.sh scripts/build_ffmpeg_wasm.sh scripts/build_wasm.sh && node --check ../shared/media-viewer.js",
+    "build": "npm run build:deps && npm run build:wasm",
+    "build:deps": "./scripts/build_ffmpeg_wasm.sh",
+    "build:wasm": "./scripts/build_wasm.sh",
+    "clean": "rm -rf .build ../browser/dist ../vscode/dist"
+  }
+}
