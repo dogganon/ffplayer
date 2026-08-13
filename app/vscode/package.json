@@ -2,7 +2,7 @@
   "name": "ffplayer",
   "displayName": "ffplayer",
   "description": "FFmpeg-backed media viewer for VS Code.",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0",
   "publisher": "ffplayer",
   "preview": true,
   "engines": {
@@ -28,7 +28,7 @@
     "check": "node --check extension.js && node --check vscode-viewer.js",
     "check:dist": "test -f dist/ffplayer.mjs && test -f dist/ffplayer.wasm && test -f dist/media-viewer.js && test -f dist/viewer.css && test -f dist/vscode-viewer.js",
     "vscode:prepublish": "npm run check:dist",
-    "package": "npm run check:dist && mkdir -p dist-package && npx --yes @vscode/vsce package --pre-release --no-dependencies --allow-missing-repository --skip-license --out dist-package/ffplayer-0.1.0-alpha.0.vsix",
+    "package": "npm run check:dist && mkdir -p dist-package && npx --yes @vscode/vsce package --pre-release --no-dependencies --allow-missing-repository --skip-license --out dist-package/ffplayer-0.1.0.vsix",
     "vscode:publish": "npm run check:dist && npx --yes @vscode/vsce publish --pre-release --no-dependencies --allow-missing-repository --skip-license -p \"$VSCE_PAT\"",
     "clean": "rm -rf dist dist-package"
   },

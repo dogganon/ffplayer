@@ -1,13 +1,18 @@
 name: Publish VS Code Extension
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    name: Build
+  publish:
+    name: Publish VS Code Extension
     runs-on: ubuntu-latest
-    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -18,34 +23,8 @@ jobs:
       - name: Build
         uses: ./.github/actions/build
 
-      - name: Upload vscode dist
-        uses: actions/upload-artifact@v4
-        with:
-          name: vscode-dist
-          path: app/vscode/dist/
-
-  publish:
-    name: Publish Alpha
-    runs-on: ubuntu-latest
-    needs: build
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Download vscode dist
-        uses: actions/download-artifact@v4
-        with:
-          name: vscode-dist
-          path: app/vscode/dist/
-
-      - name: Publish pre-release
+      - name: Publish VS Code extension
+        shell: bash -el {0}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: npm run vscode:publish

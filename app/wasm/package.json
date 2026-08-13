@@ -1,6 +1,7 @@
 {
   "name": "@ffplayer/wasm",
   "private": true,
+  "version": "0.1.0",
   "scripts": {
     "check": "bash -n scripts/build_dav1d_wasm.sh scripts/build_ffmpeg_wasm.sh scripts/build_wasm.sh && node --check ../shared/media-viewer.js",
     "build": "npm run build:deps && npm run build:wasm",

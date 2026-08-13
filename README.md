@@ -63,7 +63,7 @@ Then choose **Open file** or **Open directory**.
 
 ## GitHub Pages
 
-The browser build is static and can be hosted on GitHub Pages. In the repository settings, set **Pages** to deploy from **GitHub Actions**, then run the **Pages** workflow or push to `main`.
+The browser build is static and can be hosted on GitHub Pages. In the repository settings, set **Pages** to deploy from **GitHub Actions**, then run the **Publish Pages** workflow or push to `main`.
 
 ## VS Code
 
@@ -85,10 +85,23 @@ Package and install:
 
 ```bash
 npm run package
-code --install-extension app/vscode/dist-package/ffplayer-0.1.0-alpha.0.vsix
+code --install-extension app/vscode/dist-package/ffplayer-0.1.0.vsix
 ```
 
 Reload VS Code after installing.
+
+### Release versioning
+
+ffplayer uses one root package version for the browser build, VS Code extension, and git tag. Use plain `major.minor.patch` versions:
+
+```bash
+npm version 0.1.1 --workspaces --include-workspace-root
+git push origin main --tags
+```
+
+`npm version` updates the root `package.json` and workspace package manifests, creates the release commit, and creates a tag such as `v0.1.1`.
+
+The VS Code Marketplace does not accept prerelease SemVer strings such as `0.1.0-alpha.0`. Prerelease publishing is controlled by the `vsce --pre-release` flag, not by a version suffix. Publishing the same version twice is rejected by the Marketplace, so every Marketplace upload needs a new global release version.
 
 Publish an alpha build to the VS Code Marketplace:
 
@@ -96,7 +109,7 @@ Publish an alpha build to the VS Code Marketplace:
 VSCE_PAT=<publisher-token> npm run vscode:publish
 ```
 
-For GitHub Actions, add a repository secret named `VSCE_PAT`, then run **Publish VS Code Extension** manually from the Actions tab. Make sure `publisher` in `package.json` matches your Marketplace publisher id before publishing.
+For GitHub Actions, add a repository secret named `VSCE_PAT`, then run the **Publish VS Code Extension** workflow or push a `v*` tag. The workflow builds the Wasm assets and publishes the VS Code alpha. Make sure `publisher` in `app/vscode/package.json` matches your Marketplace publisher id before publishing.
 
 ## VS Code Remote
 
