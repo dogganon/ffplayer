@@ -2,14 +2,15 @@ const vscode = require('vscode');
 const MAX_READ_BYTES = 256 * 1024 * 1024;
 
 function activate(context) {
-  context.subscriptions.push(vscode.window.registerCustomEditorProvider(
-    'ffplayer.mediaViewer',
-    new FFplayerMediaViewer(context),
-    {
-      webviewOptions: { retainContextWhenHidden: true },
-      supportsMultipleEditorsPerDocument: false,
-    },
-  ));
+  const provider = new FFplayerMediaViewer(context);
+  const options = {
+    webviewOptions: { retainContextWhenHidden: true },
+    supportsMultipleEditorsPerDocument: false,
+  };
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider('ffplayer.mediaViewer', provider, options),
+    vscode.window.registerCustomEditorProvider('ffplayer.mediaViewer.optional', provider, options),
+  );
 }
 
 class FFplayerMediaViewer {

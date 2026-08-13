@@ -2,7 +2,7 @@
   "name": "ffplayer",
   "displayName": "ffplayer",
   "description": "FFmpeg-backed media viewer for VS Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "ffplayer",
   "preview": true,
   "engines": {
@@ -16,7 +16,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onCustomEditor:ffplayer.mediaViewer"
+    "onCustomEditor:ffplayer.mediaViewer",
+    "onCustomEditor:ffplayer.mediaViewer.optional"
   ],
   "main": "./extension.js",
   "files": [
@@ -39,10 +40,20 @@
         "displayName": "ffplayer",
         "selector": [
           {
-            "filenamePattern": "*.{3g2,3gp,aac,ac3,aiff,ape,asf,avi,avif,av1,caf,dts,dv,f4v,flac,flv,m2ts,m4a,m4v,mka,mkv,mov,mp2,mp3,mp4,mpeg,mpg,mts,mxf,oga,ogg,ogm,ogv,opus,ts,vob,wav,webm,wma,wmv}"
+            "filenamePattern": "*.{3g2,3gp,aiff,asf,avi,avif,caf,f4v,flv,m2ts,m4a,m4v,mka,mkv,mov,mp4,mpeg,mpg,mxf,oga,ogg,ogm,ogv,vob,wav,webm,wma,wmv}"
           }
         ],
         "priority": "default"
+      },
+      {
+        "viewType": "ffplayer.mediaViewer.optional",
+        "displayName": "ffplayer",
+        "selector": [
+          {
+            "filenamePattern": "*.*"
+          }
+        ],
+        "priority": "option"
       }
     ]
   }

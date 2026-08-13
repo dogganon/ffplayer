@@ -4,7 +4,7 @@ set -euo pipefail
 DAV1D_VERSION="${DAV1D_VERSION:-1.5.1}"
 WASM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 THIRDPARTY="$WASM_ROOT/thirdparty"
-BUILD_ROOT="${FFPLAYER_WASM_BUILD_ROOT:-$WASM_ROOT/.build}"
+BUILD_ROOT="${FFPLAYER_WASM_BUILD_ROOT:-$WASM_ROOT/build}"
 DEPS_BUILD="$BUILD_ROOT/deps"
 SRC="$THIRDPARTY/dav1d"
 BUILD="$BUILD_ROOT/dav1d-build"

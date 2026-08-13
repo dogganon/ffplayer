@@ -2,7 +2,7 @@
 set -euo pipefail
 WASM_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(cd "$WASM_ROOT/../.." && pwd)"
-BUILD_ROOT="${FFPLAYER_WASM_BUILD_ROOT:-$WASM_ROOT/.build}"
+BUILD_ROOT="${FFPLAYER_WASM_BUILD_ROOT:-$WASM_ROOT/build}"
 DEPS_BUILD="$BUILD_ROOT/deps"
 PREFIX="${FFMPEG_PREFIX:-${FFMPEG_ROOT:-$DEPS_BUILD/ffmpeg-wasm}}"
 DAV1D_ROOT="${DAV1D_ROOT:-$DEPS_BUILD/dav1d-wasm}"

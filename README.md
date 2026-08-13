@@ -95,7 +95,7 @@ Reload VS Code after installing.
 ffplayer uses one root package version for the browser build, VS Code extension, and git tag. Use plain `major.minor.patch` versions:
 
 ```bash
-npm version 0.1.1 --workspaces --include-workspace-root
+npm version <version> --workspaces --include-workspace-root --allow-same-version
 git push origin main --tags
 ```
 

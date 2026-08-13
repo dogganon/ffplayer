@@ -19,17 +19,3 @@ yarn-error.log*
 Thumbs.db
 *.swp
 *.swo
-
-# Native build outputs
-/build/
-/build-*/
-/cmake-build-*/
-dist/
-dist-package/
-/CMakeCache.txt
-/CMakeFiles/
-/compile_commands.json
-*.so
-*.pyd
-*.dylib
-.build/
