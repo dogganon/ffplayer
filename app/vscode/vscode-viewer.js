@@ -28,7 +28,7 @@ window.addEventListener('message', (event) => {
       name: msg.name,
       size: msg.size,
     };
-    viewer.setStatus(`Reading ${pendingItem.name}...`);
+    viewer.setBusy(true, `Reading ${pendingItem.name}...`);
     vscode.postMessage({ type: 'readFile', id: pendingItem.id, uri: pendingItem.uri });
   } else if (msg?.type === 'fileBytes' && pendingItem?.id === msg.id) {
     try {
@@ -38,11 +38,13 @@ window.addEventListener('message', (event) => {
       }
       viewer.open(pendingItem);
     } catch (err) {
+      viewer.setBusy(false);
       reportError(`Failed to open ${pendingItem.name}`, err);
       viewer.setStatus(String(err?.message ?? err), true);
     }
   } else if (msg?.type === 'error') {
     const err = new Error(msg.message || 'VS Code extension error');
+    viewer.setBusy(false);
     reportError(err.message, err);
     viewer.setStatus(err.message, true);
   }

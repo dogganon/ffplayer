@@ -1,8 +1,4 @@
-import createFFplayer from './ffplayer.mjs';
-
-let avModulePromise = null;
 let audioContext = null;
-const PAUSED_DECODE_CHUNK_LIMIT = 12;
 
 export class MediaViewer {
   constructor(root) {
@@ -17,16 +13,22 @@ export class MediaViewer {
         <input class="timeline" type="range" min="0" max="0" step="0.01" value="0" disabled aria-label="Playback position">
         <button class="step-forward" type="button" disabled title="Forward 5 seconds">+5s</button>
         <div class="time">0:00 / unknown</div>
-        <button class="mute" type="button" disabled title="Mute">Mute</button>
-        <input class="volume" type="range" min="0" max="1" step="0.01" value="1" disabled aria-label="Volume">
-        <input class="tile-scale" type="range" min="180" max="640" step="20" value="260" title="Tile size" aria-label="Tile size">
-        <div class="status">Loading FFmpeg...</div>
+        <label class="input-control speed-control">
+          <span>Speed</span>
+          <input class="playback-rate" type="number" step="0.05" value="1" disabled inputmode="decimal" aria-label="Playback speed">
+          <span aria-hidden="true">x</span>
+        </label>
+        <label class="range-control tile-control" title="Tile size">
+          <span>Tiles</span>
+          <input class="tile-scale" type="range" min="180" max="640" step="20" value="260" aria-label="Tile size">
+        </label>
+        <div class="status" aria-live="polite"></div>
       </div>
       <div class="viewer-shell">
         <section class="stage"><div class="note">Open a media file.</div></section>
         <aside class="details"></aside>
       </div>
-      <div class="loading-overlay" hidden>
+      <div class="loading-overlay" role="status" aria-live="polite" hidden>
         <div class="spinner" aria-hidden="true"></div>
         <div class="loading-text">Loading...</div>
       </div>
@@ -38,10 +40,10 @@ export class MediaViewer {
       timeline: this.root.querySelector('.timeline'),
       stepForward: this.root.querySelector('.step-forward'),
       time: this.root.querySelector('.time'),
-      mute: this.root.querySelector('.mute'),
-      volume: this.root.querySelector('.volume'),
+      playbackRate: this.root.querySelector('.playback-rate'),
       tileScale: this.root.querySelector('.tile-scale'),
       status: this.root.querySelector('.status'),
+      shell: this.root.querySelector('.viewer-shell'),
       stage: this.root.querySelector('.stage'),
       details: this.root.querySelector('.details'),
       overlay: this.root.querySelector('.loading-overlay'),
@@ -55,8 +57,7 @@ export class MediaViewer {
     this.els.stepBack.addEventListener('click', () => this.player?.seekBy(-5));
     this.els.stepForward.addEventListener('click', () => this.player?.seekBy(5));
     this.els.timeline.addEventListener('input', () => this.player?.seek(Number(this.els.timeline.value)));
-    this.els.mute.addEventListener('click', () => this.player?.toggleMute());
-    this.els.volume.addEventListener('input', () => this.player?.setVolume(Number(this.els.volume.value)));
+    this.els.playbackRate.addEventListener('change', () => this.player?.setPlaybackRate(Number(this.els.playbackRate.value)));
     this.els.tileScale.addEventListener('input', () => {
       const size = Number(this.els.tileScale.value);
       this.root.style.setProperty('--tile-min', `${size}px`);
@@ -68,7 +69,7 @@ export class MediaViewer {
     this.setBusy(true, 'Loading FFmpeg...');
     try {
       await nextPaint();
-      this.av = await loadAV();
+      this.av = await DecoderClient.create();
       this.setStatus(`FFmpeg ${this.av.version()}`);
       return this.av;
     } finally {
@@ -80,10 +81,10 @@ export class MediaViewer {
     if (!this.av || !item.bytes) return;
     this.player?.destroy();
     this.setBusy(true, `Opening ${item.name}...`);
-    this.showStageNote(`Opening ${item.name}...`);
     try {
       await nextPaint();
-      this.player = new StreamingPlayer(this, new this.av.DecodeSession(item.bytes), item);
+      const session = await this.av.open(item.bytes);
+      this.player = new StreamingPlayer(this, session, item);
       this.player.mount();
       this.setControlsEnabled(true);
     } catch (err) {
@@ -103,19 +104,16 @@ export class MediaViewer {
   setBusy(busy, text = 'Loading...') {
     this.root.classList.toggle('busy', busy);
     this.els.overlay.hidden = !busy;
-    this.els.overlayText.textContent = text;
-    this.setStatus(text);
+    if (busy) this.els.overlayText.textContent = text;
   }
 
   showStageNote(text, error = false) {
-    this.els.stage.replaceChildren(el('div', `empty-state${error ? ' error' : ''}`, [
-      el('div', 'spinner', ''),
-      el('div', 'empty-title', text),
-    ]));
+    this.els.stage.replaceChildren(el('div', `empty-state${error ? ' error' : ''}`, [el('div', 'empty-title', text)]));
   }
 
   destroy() {
     this.player?.destroy();
+    this.av?.delete();
   }
 
   setControlsEnabled(enabled) {
@@ -125,25 +123,144 @@ export class MediaViewer {
       this.els.stepBack,
       this.els.timeline,
       this.els.stepForward,
-      this.els.mute,
-      this.els.volume,
+      this.els.playbackRate,
     ]) {
       control.disabled = !enabled;
     }
   }
 }
 
-function loadAV() {
-  avModulePromise ||= createFFplayer({ locateFile: (path) => new URL(path, import.meta.url).href });
-  return avModulePromise;
-}
-
 function nextPaint() {
-  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  return new Promise((resolve) => requestAnimationFrame(resolve));
 }
 
 export function reportError(message, err) {
   console.error(message, err);
+}
+
+class DecoderClient {
+  static async create() {
+    const [runtimeSource, workerSource, wasmBinary] = await Promise.all([
+      fetchSource(new URL('./ffplayer.mjs', import.meta.url), 'FFmpeg runtime'),
+      fetchSource(new URL('./decode-worker.js', import.meta.url), 'decode worker'),
+      fetchBinary(new URL('./ffplayer.wasm', import.meta.url), 'FFmpeg WebAssembly'),
+    ]);
+    const wasmModule = await WebAssembly.compile(wasmBinary);
+    const workerUrl = URL.createObjectURL(new Blob([
+      workerRuntimeSource(runtimeSource),
+      '\n',
+      workerSource,
+    ], { type: 'text/javascript' }));
+    const client = new DecoderClient(new Worker(workerUrl, { type: 'module' }), workerUrl);
+    const ready = await client.call('ready', { wasmModule });
+    client.ffmpegVersion = ready.version;
+    return client;
+  }
+
+  constructor(worker, workerUrl) {
+    this.worker = worker;
+    this.workerUrl = workerUrl;
+    this.nextRequestId = 1;
+    this.pending = new Map();
+    this.worker.addEventListener('message', (event) => this.handleMessage(event.data));
+    this.worker.addEventListener('error', (event) => this.failAll(new Error(event.message || 'Decode worker failed')));
+  }
+
+  version() {
+    return this.ffmpegVersion;
+  }
+
+  async open(bytes) {
+    const buffer = transferableBuffer(bytes);
+    const result = await this.call('open', { bytes: buffer }, [buffer]);
+    return new WorkerDecodeSession(this, result.sessionId, result.info);
+  }
+
+  call(type, payload = {}, transfer = []) {
+    const id = this.nextRequestId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.worker.postMessage({ id, type, payload }, transfer);
+    });
+  }
+
+  handleMessage(message) {
+    const request = this.pending.get(message.id);
+    if (!request) return;
+    this.pending.delete(message.id);
+    if (message.error) {
+      const err = new Error(message.error.message);
+      err.stack = message.error.stack || err.stack;
+      request.reject(err);
+    } else {
+      request.resolve(message.result);
+    }
+  }
+
+  failAll(err) {
+    for (const request of this.pending.values()) request.reject(err);
+    this.pending.clear();
+  }
+
+  delete() {
+    this.failAll(new Error('Decode worker was closed'));
+    this.worker.terminate();
+    URL.revokeObjectURL(this.workerUrl);
+  }
+}
+
+async function fetchSource(url, label) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to load ${label}: ${response.status}`);
+  return response.text();
+}
+
+async function fetchBinary(url, label) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to load ${label}: ${response.status}`);
+  return response.arrayBuffer();
+}
+
+function workerRuntimeSource(source) {
+  const exportStatement = 'export default createFFplayer;';
+  const exportIndex = source.lastIndexOf(exportStatement);
+  if (exportIndex < 0) throw new Error('FFmpeg runtime has an unexpected module format');
+  return source.slice(0, exportIndex) + source.slice(exportIndex + exportStatement.length);
+}
+
+class WorkerDecodeSession {
+  constructor(client, id, info) {
+    this.client = client;
+    this.id = id;
+    this.streamInfo = info;
+  }
+
+  info() {
+    return this.streamInfo;
+  }
+
+  read() {
+    return this.client.call('read', { sessionId: this.id });
+  }
+
+  seek(time) {
+    return this.client.call('seek', { sessionId: this.id, time });
+  }
+
+  delete() {
+    this.client.call('close', { sessionId: this.id }).catch(() => {});
+  }
+}
+
+function transferableBuffer(bytes) {
+  if (bytes instanceof Uint8Array && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer;
+  }
+  if (ArrayBuffer.isView(bytes)) {
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  }
+  if (bytes instanceof ArrayBuffer) return bytes;
+  return new Uint8Array(bytes).buffer;
 }
 
 class StreamingPlayer {
@@ -158,13 +275,11 @@ class StreamingPlayer {
     this.startWall = 0;
     this.offset = 0;
     this.raf = 0;
-    this.pumpTimer = 0;
+    this.pumpPending = false;
+    this.generation = 0;
     this.audioSources = [];
-    this.pausedDecodeChunks = 0;
     this.duration = Number.isFinite(this.info.durationSeconds) && this.info.durationSeconds > 0 ? this.info.durationSeconds : 0;
-    this.volume = 1;
-    this.muted = false;
-    this.gain = null;
+    this.playbackRate = 1;
   }
 
   mount() {
@@ -189,42 +304,42 @@ class StreamingPlayer {
   }
 
   destroy() {
+    this.generation += 1;
     this.pause();
-    clearTimeout(this.pumpTimer);
+    for (const track of this.tracks.values()) track.destroy();
     this.session?.delete?.();
   }
 
-  pump() {
-    if (this.done) return;
+  async pump() {
+    if (this.done || this.pumpPending) return;
+    const generation = this.generation;
+    this.pumpPending = true;
     try {
-      const batch = this.session.read(this.playing ? 12 : 6);
+      const batch = await this.session.read();
+      if (generation !== this.generation) return;
       this.done = batch.done;
-      if (!this.playing) this.pausedDecodeChunks += batch.chunks.length;
       for (const chunk of batch.chunks) {
         this.tracks.get(chunk.stream)?.push(chunk);
       }
       if (this.playing) this.scheduleAudio();
-      if (!this.done && (this.playing || this.pausedDecodeChunks < PAUSED_DECODE_CHUNK_LIMIT)) {
-        this.pumpTimer = setTimeout(() => this.pump(), this.playing ? 0 : 16);
-      }
     } catch (err) {
+      if (generation !== this.generation) return;
       reportError('Failed while decoding media', err);
       this.viewer.setStatus(String(err?.message ?? err), true);
       this.done = true;
+    } finally {
+      this.pumpPending = false;
+    }
+    if (generation === this.generation && this.playing && !this.done) {
+      this.pump();
     }
   }
 
   async play() {
     audioContext ||= new AudioContext();
     await audioContext.resume();
-    if (!this.gain) {
-      this.gain = audioContext.createGain();
-      this.gain.connect(audioContext.destination);
-      this.updateGain();
-    }
     this.playing = true;
-    this.pausedDecodeChunks = 0;
-    this.startWall = performance.now() / 1000 - this.offset;
+    this.startWall = performance.now() / 1000 - this.offset / this.playbackRate;
     this.scheduleAudio();
     this.pump();
     this.tick();
@@ -245,51 +360,53 @@ class StreamingPlayer {
   }
 
   seekBy(delta) {
-    this.seek(this.offset + delta);
+    this.seek(this.currentPlaybackTime() + delta);
   }
 
-  seek(time) {
+  async seek(time) {
     const max = this.duration || Math.max(this.offset, 0);
     const target = clamp(time, 0, max);
     const wasPlaying = this.playing;
     this.pause();
-    clearTimeout(this.pumpTimer);
+    const generation = ++this.generation;
+    for (const track of this.tracks.values()) track.clear();
+    this.offset = target;
+    this.startWall = performance.now() / 1000 - this.offset / this.playbackRate;
+    this.updateControls();
     try {
-      this.session.seek(target);
+      await this.session.seek(target);
+      if (generation !== this.generation) return;
       this.done = false;
-      this.pausedDecodeChunks = 0;
-      for (const track of this.tracks.values()) track.clear();
     } catch (err) {
+      if (generation !== this.generation) return;
       reportError(`Failed to seek ${this.item.name}`, err);
       this.viewer.setStatus(String(err?.message ?? err), true);
     }
-    this.offset = target;
-    this.startWall = performance.now() / 1000 - this.offset;
-    this.updateControls();
     this.pump();
-    if (wasPlaying) this.play();
+    if (wasPlaying) await this.play();
   }
 
-  toggleMute() {
-    this.muted = !this.muted;
-    this.updateGain();
+  async setPlaybackRate(rate) {
+    if (!Number.isFinite(rate) || rate <= 0) {
+      this.updateControls();
+      return;
+    }
+    if (rate === this.playbackRate) return;
+    const target = this.currentPlaybackTime();
+    const wasPlaying = this.playing;
+    this.playbackRate = rate;
     this.updateControls();
+    if (wasPlaying) await this.seek(target);
   }
 
-  setVolume(volume) {
-    this.volume = clamp(volume, 0, 1);
-    this.muted = this.volume === 0;
-    this.updateGain();
-    this.updateControls();
-  }
-
-  updateGain() {
-    if (this.gain) this.gain.gain.value = this.muted ? 0 : this.volume;
+  currentPlaybackTime() {
+    if (!this.playing) return this.offset;
+    return (performance.now() / 1000 - this.startWall) * this.playbackRate;
   }
 
   tick() {
     if (!this.playing) return;
-    const t = performance.now() / 1000 - this.startWall;
+    const t = this.currentPlaybackTime();
     this.offset = this.duration ? Math.min(t, this.duration) : t;
     this.viewer.setStatus(`${this.item.name}  ${formatDuration(t)}${this.done ? '' : '  decoding...'}`);
     for (const track of this.tracks.values()) track.render(t);
@@ -302,10 +419,11 @@ class StreamingPlayer {
   }
 
   scheduleAudio() {
+    const playbackTime = this.currentPlaybackTime();
     for (const track of this.tracks.values()) {
       if (track.stream.type !== 'audio') continue;
       const chunks = track.audio.splice(0);
-      let when = audioContext.currentTime + 0.04;
+      let sequentialWhen = audioContext.currentTime + 0.04;
       for (const chunk of chunks) {
         const channels = Math.max(1, chunk.channels || 1);
         const frames = Math.floor(chunk.samples.length / channels);
@@ -317,9 +435,18 @@ class StreamingPlayer {
         }
         const source = audioContext.createBufferSource();
         source.buffer = buffer;
-        source.connect(this.gain || audioContext.destination);
-        source.start(when);
-        when += buffer.duration;
+        source.playbackRate.value = this.playbackRate;
+        source.connect(track.audioOutput(audioContext));
+        source.onended = () => {
+          const index = this.audioSources.indexOf(source);
+          if (index >= 0) this.audioSources.splice(index, 1);
+        };
+        const mediaTime = Number.isFinite(chunk.time) ? chunk.time : null;
+        const when = mediaTime == null ? sequentialWhen : audioContext.currentTime + (mediaTime - playbackTime) / this.playbackRate;
+        const offset = Math.max(0, (audioContext.currentTime - when) * this.playbackRate);
+        if (offset >= buffer.duration) continue;
+        source.start(Math.max(when, audioContext.currentTime), offset);
+        sequentialWhen = when + buffer.duration / this.playbackRate;
         this.audioSources.push(source);
       }
     }
@@ -327,10 +454,9 @@ class StreamingPlayer {
 
   updateControls() {
     this.viewer.els.play.textContent = this.playing ? 'Pause' : 'Play';
-    this.viewer.els.mute.textContent = this.muted ? 'Unmute' : 'Mute';
-    this.viewer.els.volume.value = String(this.volume);
     this.viewer.els.timeline.max = String(this.duration || Math.max(this.offset, 0));
     this.viewer.els.timeline.value = String(this.offset);
+    this.viewer.els.playbackRate.value = String(this.playbackRate);
     this.viewer.els.time.textContent = `${formatDuration(this.offset)} / ${formatDuration(this.duration)}`;
   }
 }
@@ -345,6 +471,14 @@ class TrackView {
     this.canvas = this.el.querySelector('canvas');
     this.ctx = this.canvas?.getContext('2d');
     this.note = this.el.querySelector('.note');
+    this.volume = 1;
+    this.muted = false;
+    this.gain = null;
+    this.muteButton = this.el.querySelector('.track-mute');
+    this.volumeInput = this.el.querySelector('.track-volume');
+    this.muteButton?.addEventListener('click', () => this.toggleMute());
+    this.volumeInput?.addEventListener('input', () => this.setVolume(Number(this.volumeInput.value)));
+    this.updateAudioControls();
   }
 
   push(chunk) {
@@ -376,6 +510,43 @@ class TrackView {
     this.ctx.putImageData(new ImageData(new Uint8ClampedArray(frame.rgba), frame.width, frame.height), 0, 0);
   }
 
+  audioOutput(context) {
+    if (!this.gain) {
+      this.gain = context.createGain();
+      this.gain.connect(context.destination);
+      this.updateGain();
+    }
+    return this.gain;
+  }
+
+  toggleMute() {
+    if (this.muted && this.volume === 0) this.volume = 1;
+    this.muted = !this.muted;
+    this.updateGain();
+    this.updateAudioControls();
+  }
+
+  setVolume(volume) {
+    this.volume = clamp(volume, 0, 1);
+    this.muted = this.volume === 0;
+    this.updateGain();
+    this.updateAudioControls();
+  }
+
+  updateGain() {
+    if (this.gain) this.gain.gain.value = this.muted ? 0 : this.volume;
+  }
+
+  updateAudioControls() {
+    if (this.muteButton) this.muteButton.textContent = this.muted ? 'Unmute' : 'Mute';
+    if (this.volumeInput) this.volumeInput.value = String(this.volume);
+  }
+
+  destroy() {
+    this.gain?.disconnect();
+    this.gain = null;
+  }
+
   clear() {
     this.video = [];
     this.audio = [];
@@ -403,8 +574,22 @@ function streamCard(stream) {
     media = document.createElement('div');
   }
   if (stream.type === 'audio') {
-    media.className = 'audio-meter';
-    media.textContent = 'audio';
+    media.className = 'audio-controls';
+    const mute = el('button', 'track-mute', 'Mute');
+    mute.type = 'button';
+    mute.title = `Mute audio stream ${stream.index}`;
+    mute.disabled = !stream.decodable;
+    const volume = document.createElement('input');
+    volume.className = 'track-volume';
+    volume.type = 'range';
+    volume.min = '0';
+    volume.max = '1';
+    volume.step = '0.01';
+    volume.value = '1';
+    volume.disabled = !stream.decodable;
+    volume.setAttribute('aria-label', `Volume for audio stream ${stream.index}`);
+    const volumeControl = el('label', 'range-control track-volume-control', [el('span', '', 'Volume'), volume]);
+    media.append(mute, volumeControl);
   }
   if (stream.type !== 'video' && stream.type !== 'audio') {
     media.className = 'audio-meter';
@@ -437,6 +622,7 @@ function renderDetails(viewer, item, info) {
     disclosure('Container metadata', meta.length ? metadataList(meta) : el('div', 'note', 'No container metadata')),
     disclosure('Tracks', metadataList(info.streams.map((s) => [`#${s.index}${s.id != null ? ` id ${s.id}` : ''}`, `${s.type || 'unknown'} / ${s.codec || 'unknown'}`]))),
   ];
+  viewer.els.shell.classList.add('has-details');
   viewer.els.details.replaceChildren(...sections);
 }
 

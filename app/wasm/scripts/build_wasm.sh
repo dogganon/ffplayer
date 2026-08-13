@@ -43,6 +43,7 @@ mkdir -p "$BROWSER_DIST" "$VSCODE_DIST"
 
 cp "$CMAKE_BUILD/index.html" \
    "$CMAKE_BUILD/browser-viewer.js" \
+   "$CMAKE_BUILD/decode-worker.js" \
    "$CMAKE_BUILD/media-viewer.js" \
    "$CMAKE_BUILD/viewer.css" \
    "$CMAKE_BUILD/ffplayer.mjs" \
@@ -50,6 +51,7 @@ cp "$CMAKE_BUILD/index.html" \
    "$BROWSER_DIST/"
 
 cp "$CMAKE_BUILD/vscode-viewer.js" \
+   "$CMAKE_BUILD/decode-worker.js" \
    "$CMAKE_BUILD/media-viewer.js" \
    "$CMAKE_BUILD/viewer.css" \
    "$CMAKE_BUILD/ffplayer.mjs" \

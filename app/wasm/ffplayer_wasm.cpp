@@ -39,10 +39,6 @@ struct DecoderState {
     AVChannelLayout out_layout{};
     val frames = val::array();
     std::vector<float> audio;
-    double first_pts = 0.0;
-    double time_offset = 0.0;
-    bool saw_pts = false;
-    int max_video_frames = 1800;
 };
 
 std::runtime_error av_error(const char* what, int err) {
@@ -99,17 +95,37 @@ val floats_to_float32_array(const float* data, std::size_t size) {
     return val::global("Float32Array").new_(emscripten::typed_memory_view(size, data));
 }
 
-double frame_time(const AVFrame* frame, const AVStream* stream, DecoderState& state) {
-    const std::int64_t pts = frame->best_effort_timestamp;
-    if (pts == AV_NOPTS_VALUE) {
+double stream_start_time(const AVStream* stream) {
+    if (stream->start_time == AV_NOPTS_VALUE) {
         return 0.0;
     }
-    const double t = static_cast<double>(pts) * av_q2d(stream->time_base);
-    if (!state.saw_pts) {
-        state.saw_pts = true;
-        state.first_pts = t;
+    return static_cast<double>(stream->start_time) * av_q2d(stream->time_base);
+}
+
+double timeline_start_time(const AVFormatContext* fmt) {
+    if (fmt->start_time != AV_NOPTS_VALUE) {
+        return static_cast<double>(fmt->start_time) / AV_TIME_BASE;
     }
-    return state.time_offset + std::max(0.0, t - state.first_pts);
+
+    double start = 0.0;
+    bool saw_start = false;
+    for (unsigned i = 0; i < fmt->nb_streams; ++i) {
+        const AVStream* stream = fmt->streams[i];
+        if (stream->start_time == AV_NOPTS_VALUE) continue;
+        const double stream_start = stream_start_time(stream);
+        start = saw_start ? std::min(start, stream_start) : stream_start;
+        saw_start = true;
+    }
+    return saw_start ? start : 0.0;
+}
+
+double frame_time(const AVFrame* frame, const AVStream* stream, double timeline_start) {
+    const std::int64_t pts = frame->best_effort_timestamp;
+    if (pts == AV_NOPTS_VALUE) {
+        return std::max(0.0, stream_start_time(stream) - timeline_start);
+    }
+    const double t = static_cast<double>(pts) * av_q2d(stream->time_base);
+    return std::max(0.0, t - timeline_start);
 }
 
 AVPixelFormat choose_software_format(AVCodecContext*, const AVPixelFormat* formats) {
@@ -140,11 +156,7 @@ val metadata_to_js(const AVDictionary* metadata) {
     return out;
 }
 
-void push_video_frame(DecoderState& state, const AVFrame* frame, const AVStream* stream) {
-    if (state.frames["length"].as<int>() >= state.max_video_frames) {
-        return;
-    }
-
+void push_video_frame(DecoderState& state, const AVFrame* frame, const AVStream* stream, double timeline_start) {
     if (!state.sws) {
         state.sws = sws_getContext(
             frame->width,
@@ -169,7 +181,7 @@ void push_video_frame(DecoderState& state, const AVFrame* frame, const AVStream*
     sws_scale(state.sws, frame->data, frame->linesize, 0, frame->height, dst, linesize);
 
     val out = val::object();
-    out.set("time", frame_time(frame, stream, state));
+    out.set("time", frame_time(frame, stream, timeline_start));
     out.set("width", frame->width);
     out.set("height", frame->height);
     out.set("rgba", bytes_to_uint8_array(rgba.data(), rgba.size()));
@@ -211,7 +223,7 @@ void append_audio_frame(DecoderState& state, const AVFrame* frame) {
     state.audio.insert(state.audio.end(), converted.begin(), converted.end());
 }
 
-void drain_decoder(DecoderState& state, const AVStream* stream) {
+void drain_decoder(DecoderState& state, const AVStream* stream, double timeline_start) {
     auto* frame = av_frame_alloc();
     if (!frame) throw std::bad_alloc();
 
@@ -223,7 +235,7 @@ void drain_decoder(DecoderState& state, const AVStream* stream) {
             throw av_error("avcodec_receive_frame failed", ret);
         }
         if (state.ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
-            push_video_frame(state, frame, stream);
+            push_video_frame(state, frame, stream, timeline_start);
         } else if (state.ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
             append_audio_frame(state, frame);
         }
@@ -261,6 +273,7 @@ static val decode_js(const val& uint8_array) {
     if (ret < 0) throw av_error("avformat_open_input failed", ret);
     ret = avformat_find_stream_info(fmt, nullptr);
     if (ret < 0) throw av_error("avformat_find_stream_info failed", ret);
+    const double timeline_start = timeline_start_time(fmt);
 
     std::vector<DecoderState> decoders(fmt->nb_streams);
     val tracks = val::array();
@@ -314,7 +327,7 @@ static val decode_js(const val& uint8_array) {
             if (decoder.ctx) {
                 const int send_ret = avcodec_send_packet(decoder.ctx, pkt);
                 if (send_ret >= 0) {
-                    drain_decoder(decoder, fmt->streams[pkt->stream_index]);
+                    drain_decoder(decoder, fmt->streams[pkt->stream_index], timeline_start);
                 }
             }
         }
@@ -325,7 +338,7 @@ static val decode_js(const val& uint8_array) {
         auto& decoder = decoders[i];
         if (!decoder.ctx) continue;
         avcodec_send_packet(decoder.ctx, nullptr);
-        drain_decoder(decoder, fmt->streams[i]);
+        drain_decoder(decoder, fmt->streams[i], timeline_start);
 
         val track = tracks[i];
         if (decoder.ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
@@ -380,6 +393,7 @@ public:
         if (ret < 0) throw av_error("avformat_open_input failed", ret);
         ret = avformat_find_stream_info(fmt_, nullptr);
         if (ret < 0) throw av_error("avformat_find_stream_info failed", ret);
+        timeline_start_ = timeline_start_time(fmt_);
 
         decoders_.resize(fmt_->nb_streams);
         open_decoders();
@@ -410,15 +424,14 @@ public:
         return out;
     }
 
-    val read(int max_packets) {
+    val read() {
         val out = val::object();
         val chunks = val::array();
         out.set("chunks", chunks);
         out.set("done", done_);
         if (done_) return out;
 
-        int packets = 0;
-        while (packets < max_packets) {
+        while (chunks["length"].as<unsigned>() == 0) {
             int ret = av_read_frame(fmt_, pkt_);
             if (ret == AVERROR_EOF) {
                 flush(chunks);
@@ -429,7 +442,6 @@ public:
                 done_ = true;
                 break;
             }
-            packets += 1;
             if (pkt_->stream_index >= 0 && pkt_->stream_index < static_cast<int>(decoders_.size())) {
                 auto& decoder = decoders_[static_cast<std::size_t>(pkt_->stream_index)];
                 if (decoder.ctx && avcodec_send_packet(decoder.ctx, pkt_) >= 0) {
@@ -454,9 +466,6 @@ public:
             if (decoder.ctx) avcodec_flush_buffers(decoder.ctx);
             decoder.frames = val::array();
             decoder.audio.clear();
-            decoder.first_pts = 0.0;
-            decoder.time_offset = seconds;
-            decoder.saw_pts = false;
         }
         done_ = false;
     }
@@ -522,7 +531,7 @@ private:
             if (state.ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
                 chunks.call<void>("push", make_video_chunk(state, frame, stream));
             } else if (state.ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
-                chunks.call<void>("push", make_audio_chunk(state, frame, stream->index));
+                chunks.call<void>("push", make_audio_chunk(state, frame, stream));
             }
             av_frame_unref(frame);
         }
@@ -552,14 +561,14 @@ private:
         val o = val::object();
         o.set("stream", stream->index);
         o.set("type", "video");
-        o.set("time", frame_time(frame, stream, state));
+        o.set("time", frame_time(frame, stream, timeline_start_));
         o.set("width", frame->width);
         o.set("height", frame->height);
         o.set("rgba", bytes_to_uint8_array(rgba.data(), rgba.size()));
         return o;
     }
 
-    val make_audio_chunk(DecoderState& state, const AVFrame* frame, int stream_index) {
+    val make_audio_chunk(DecoderState& state, const AVFrame* frame, const AVStream* stream) {
         if (!state.swr) {
             av_channel_layout_default(&state.out_layout, frame->ch_layout.nb_channels > 1 ? 2 : 1);
             int ret = swr_alloc_set_opts2(&state.swr, &state.out_layout, AV_SAMPLE_FMT_FLT, frame->sample_rate,
@@ -578,8 +587,9 @@ private:
         samples.resize(static_cast<std::size_t>(got) * channels);
 
         val o = val::object();
-        o.set("stream", stream_index);
+        o.set("stream", stream->index);
         o.set("type", "audio");
+        o.set("time", frame_time(frame, stream, timeline_start_));
         o.set("sampleRate", frame->sample_rate);
         o.set("channels", channels);
         o.set("samples", floats_to_float32_array(samples.data(), samples.size()));
@@ -592,6 +602,7 @@ private:
     AVPacket* pkt_ = nullptr;
     std::vector<DecoderState> decoders_;
     val tracks_ = val::array();
+    double timeline_start_ = 0.0;
     bool done_ = false;
 };
 

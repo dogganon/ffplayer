@@ -91,4 +91,5 @@ configure_file(app/browser/index.html "${CMAKE_CURRENT_BINARY_DIR}/index.html" C
 configure_file(app/browser/browser-viewer.js "${CMAKE_CURRENT_BINARY_DIR}/browser-viewer.js" COPYONLY)
 configure_file(app/vscode/vscode-viewer.js "${CMAKE_CURRENT_BINARY_DIR}/vscode-viewer.js" COPYONLY)
 configure_file(app/shared/media-viewer.js "${CMAKE_CURRENT_BINARY_DIR}/media-viewer.js" COPYONLY)
+configure_file(app/shared/decode-worker.js "${CMAKE_CURRENT_BINARY_DIR}/decode-worker.js" COPYONLY)
 configure_file(app/shared/viewer.css "${CMAKE_CURRENT_BINARY_DIR}/viewer.css" COPYONLY)

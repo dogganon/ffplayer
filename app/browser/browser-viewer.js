@@ -13,7 +13,7 @@ app.innerHTML = `
         <input id="directory" type="file" multiple webkitdirectory />
       </label>
     </div>
-    <div class="browser-shell">
+    <div id="browser-shell" class="browser-shell">
       <aside id="playlist" class="playlist"></aside>
       <section id="viewer" class="viewer"></section>
     </div>
@@ -23,6 +23,7 @@ app.innerHTML = `
 const viewer = new MediaViewer(document.querySelector('#viewer'));
 const fileInput = document.querySelector('#file');
 const directoryInput = document.querySelector('#directory');
+const browserShell = document.querySelector('#browser-shell');
 const playlistEl = document.querySelector('#playlist');
 let playlist = [];
 
@@ -51,6 +52,7 @@ function setPlaylist(files) {
 }
 
 function renderPlaylist() {
+  browserShell.classList.toggle('has-playlist', playlist.length > 0);
   playlistEl.replaceChildren(...playlist.map((item, index) => {
     const button = document.createElement('button');
     button.className = 'playlist-item';

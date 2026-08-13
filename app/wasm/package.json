@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.1",
   "scripts": {
-    "check": "bash -n scripts/build_dav1d_wasm.sh scripts/build_ffmpeg_wasm.sh scripts/build_wasm.sh && node --check ../shared/media-viewer.js",
+    "check": "bash -n scripts/build_dav1d_wasm.sh scripts/build_ffmpeg_wasm.sh scripts/build_wasm.sh && node --check ../shared/media-viewer.js && node --check ../shared/decode-worker.js",
     "build": "npm run build:deps && npm run build:wasm",
     "build:deps": "./scripts/build_ffmpeg_wasm.sh",
     "build:wasm": "./scripts/build_wasm.sh",
