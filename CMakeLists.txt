@@ -74,7 +74,7 @@ target_compile_options(ffplayer_wasm PRIVATE
   "-fexceptions"
 )
 target_link_options(ffplayer_wasm PRIVATE
-  "-O0"
+  "-O1"
   "--no-entry"
   "-lembind"
   "-fexceptions"
