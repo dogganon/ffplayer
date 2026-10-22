@@ -83,7 +83,6 @@ async function selectItem(index) {
   try {
     viewer.setBusy(true, `Reading ${item.name}...`);
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    item.bytes = new Uint8Array(await item.file.arrayBuffer());
     await viewer.open(item);
   } catch (err) {
     reportError(`Failed to read ${item.name}`, err);

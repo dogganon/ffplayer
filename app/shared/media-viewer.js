@@ -161,12 +161,16 @@ export class MediaViewer {
   }
 
   async open(item) {
-    if (!this.av || !item.bytes) return;
+    if (!this.av || (!item.file && !item.readRange)) return;
+    const opening = this.opening = (this.opening || 0) + 1;
     this.player?.destroy();
+    this.player = null;
     this.setBusy(true, `Opening ${item.name}...`);
     try {
       await nextPaint();
-      const session = await this.av.open(item.bytes);
+      if (opening !== this.opening) return;
+      const session = await this.av.open(item);
+      if (opening !== this.opening) { session.delete(); return; }
       this.player = new StreamingPlayer(this, session, item);
       this.player.mount();
       this.setControlsEnabled(true);
@@ -179,11 +183,12 @@ export class MediaViewer {
         }
       }
     } catch (err) {
+      if (opening !== this.opening) return;
       reportError('Failed to open media', err);
       this.setStatus(String(err?.message ?? err), true);
       this.showStageNote(String(err?.message ?? err), true);
     } finally {
-      this.setBusy(false);
+      if (opening === this.opening) this.setBusy(false);
     }
   }
 
@@ -263,10 +268,28 @@ class DecoderClient {
     return this.ffmpegVersion;
   }
 
-  async open(bytes) {
-    const buffer = transferableBuffer(bytes);
-    const result = await this.call('open', { bytes: buffer }, [buffer]);
-    return new WorkerDecodeSession(this, result.sessionId, result.info);
+  async open(item) {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = async ({ data }) => {
+      try {
+        const bytes = await item.readRange(data.offset, data.length);
+        const buffer = transferableBuffer(bytes);
+        channel.port1.postMessage({ id: data.id, bytes: buffer }, [buffer]);
+      } catch (err) {
+        channel.port1.postMessage({ id: data.id, error: String(err?.message ?? err) });
+      }
+    };
+    try {
+      const result = await this.call('open', {
+        file: item.file, size: item.size, port: item.file ? undefined : channel.port2,
+      }, item.file ? [] : [channel.port2]);
+      return new WorkerDecodeSession(this, result.sessionId, result.info, channel.port1);
+    } catch (err) {
+      channel.port1.close();
+      throw err;
+    } finally {
+      if (item.file) { channel.port1.close(); channel.port2.close(); }
+    }
   }
 
   call(type, payload = {}, transfer = []) {
@@ -322,7 +345,8 @@ function workerRuntimeSource(source) {
 }
 
 class WorkerDecodeSession {
-  constructor(client, id, info) {
+  constructor(client, id, info, port) {
+    this.port = port;
     this.client = client;
     this.id = id;
     this.streamInfo = info;
@@ -341,7 +365,7 @@ class WorkerDecodeSession {
   }
 
   delete() {
-    this.client.call('close', { sessionId: this.id }).catch(() => {});
+    this.client.call('close', { sessionId: this.id }).catch(() => {}).finally(() => this.port.close());
   }
 }
 
@@ -397,14 +421,37 @@ class StreamingPlayer {
   }
 
   destroy() {
+    this.destroyed = true;
     this.generation += 1;
     this.pause();
     for (const track of this.tracks.values()) track.destroy();
     this.session?.delete?.();
   }
 
+  bufferFull() {
+    const now = this.currentPlaybackTime();
+    let bytes = 0;
+    let ahead = 0;
+    for (const track of this.tracks.values()) {
+      for (const frame of track.video) {
+        // The displayed frame cannot be released until its successor arrives.
+        if (frame !== track.drawn) bytes += frame.rgba.byteLength;
+        ahead = Math.max(ahead, frame.time - now);
+      }
+      for (const chunk of track.audio) {
+        bytes += chunk.samples.byteLength;
+        ahead = Math.max(ahead, chunk.time + chunk.samples.length / chunk.channels / chunk.sampleRate - now);
+      }
+    }
+    for (const source of this.audioSources) {
+      bytes += source.buffer.length * source.buffer.numberOfChannels * 4;
+      ahead = Math.max(ahead, source.mediaEnd - now);
+    }
+    return bytes >= 64 * 1024 * 1024 || ahead >= 2;
+  }
+
   async pump() {
-    if (this.done || this.pumpPending) return;
+    if (this.destroyed || this.done || this.pumpPending || this.bufferFull()) return;
     const generation = this.generation;
     this.pumpPending = true;
     try {
@@ -428,7 +475,12 @@ class StreamingPlayer {
     }
   }
 
-  play() {
+  async play() {
+    if (this.needsSeek) {
+      await this.seek(this.offset);
+      if (this.needsSeek) return;
+    }
+    if (this.destroyed) return;
     audioContext ||= new AudioContext();
     this.playing = true;
     this.startWall = performance.now() / 1000 - this.offset / this.playbackRate;
@@ -449,6 +501,10 @@ class StreamingPlayer {
   }
 
   pause() {
+    if (this.playing) {
+      this.offset = this.currentPlaybackTime();
+      this.needsSeek = true;
+    }
     this.playing = false;
     cancelAnimationFrame(this.raf);
     for (const source of this.audioSources) source.stop();
@@ -479,10 +535,12 @@ class StreamingPlayer {
       await this.session.seek(target);
       if (generation !== this.generation) return;
       this.done = false;
+      this.needsSeek = false;
     } catch (err) {
       if (generation !== this.generation) return;
       reportError(`Failed to seek ${this.item.name}`, err);
       this.viewer.setStatus(String(err?.message ?? err), true);
+      return;
     }
     this.pump();
     if (wasPlaying) await this.play();
@@ -512,6 +570,8 @@ class StreamingPlayer {
     this.offset = this.duration ? Math.min(t, this.duration) : t;
     this.viewer.setStatus(`${this.item.name}  ${formatDuration(t)}${this.done ? '' : '  decoding...'}`);
     for (const track of this.tracks.values()) track.render(t);
+    this.scheduleAudio();
+    this.pump();
     this.updateControls();
     if (this.duration && this.offset >= this.duration) {
       if (this.viewer.settings.autoloop) this.seek(0);
@@ -551,6 +611,7 @@ class StreamingPlayer {
         if (offset >= buffer.duration) continue;
         source.start(Math.max(when, audioContext.currentTime), offset);
         sequentialWhen = when + buffer.duration / this.playbackRate;
+        source.mediaEnd = (mediaTime ?? playbackTime) + buffer.duration;
         this.audioSources.push(source);
       }
     }
@@ -598,15 +659,12 @@ class TrackView {
 
   render(time) {
     if (!this.ctx || !this.video.length) return;
-    let index = this.drawn < 0 ? 0 : this.drawn;
+    let index = 0;
     while (index + 1 < this.video.length && this.video[index + 1].time <= time) index += 1;
-    if (index === this.drawn) return;
-    if (index > 4) {
-      this.video.splice(0, index - 2);
-      index = 2;
-    }
-    this.drawn = index;
-    const frame = this.video[index];
+    if (index > 0) this.video.splice(0, index);
+    const frame = this.video[0];
+    if (this.drawn === frame) return;
+    this.drawn = frame;
     if (this.canvas.width !== frame.width || this.canvas.height !== frame.height) {
       this.canvas.width = frame.width;
       this.canvas.height = frame.height;

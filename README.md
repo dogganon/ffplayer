@@ -39,6 +39,16 @@ app/browser/dist/
 app/vscode/dist/
 ```
 
+Validate the source and the built Wasm file I/O:
+
+```bash
+npm run check
+npm test
+npm run test:wasm
+```
+
+The Wasm test opens and seeks a sparse file larger than 256 MiB and verifies that FFmpeg reads only small ranges. Run it after building.
+
 Clean generated files:
 
 ```bash
@@ -60,8 +70,6 @@ npm run serve:no-open
 ```
 
 Then choose **Open file** or **Open directory**.
-
-## GitHub Pages
 
 The browser build is static and can be hosted on GitHub Pages. In the repository settings, set **Pages** to deploy from **GitHub Actions**, then run the **Publish Pages** workflow or push to `main`.
 
@@ -115,9 +123,9 @@ For GitHub Actions, add a repository secret named `VSCE_PAT`, then run the **Pub
 
 Open this repository through Remote-SSH, WSL, or Dev Containers, build the wasm assets in that workspace, then press `F5` from the remote VS Code window.
 
-The extension declares `"extensionKind": ["ui", "workspace"]`, so VS Code can run it in either host. It uses `vscode.workspace.fs` and bundled `app/vscode/dist/` assets; it does not use a backend server or direct Node filesystem paths.
+The extension declares `"extensionKind": ["workspace", "ui"]`, so VS Code can run it in either host. It reads file ranges in the workspace extension host using Node filesystem APIs and uses bundled `app/vscode/dist/` assets. No backend server is required. Virtual filesystem providers without filesystem paths are not supported.
 
-The current VS Code bridge transfers the opened file as one `Uint8Array`, so it refuses files larger than 256 MB to avoid making the extension host unresponsive. Large media should move to a range-read bridge between the webview and extension host.
+Media is read on demand in ranges of at most 256 KiB, including when seeking. Browser files use Blob slices; VS Code files use a range-read bridge to the workspace extension host. There is no 256 MiB file-size limit. Decoding pauses at two seconds of lookahead or 64 MiB of queued decoded data (a single decode batch and decoder internals can exceed this threshold). The Wasm build uses Asyncify to suspend FFmpeg while ranges are read.
 
 ## Workspace Scripts
 

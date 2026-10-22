@@ -14,7 +14,8 @@ const viewer = new MediaViewer(document.querySelector('#viewer'), {
     vscode.postMessage({ type: 'settingsChanged', settings });
   },
 });
-let pendingItem = null;
+let nextRangeId = 0;
+const ranges = new Map();
 
 viewer.ready()
   .then(() => vscode.postMessage({ type: 'ready' }))
@@ -28,26 +29,14 @@ window.addEventListener('message', (event) => {
   if (msg?.type === 'settings') {
     viewer.applySettings(msg.settings);
   } else if (msg?.type === 'media') {
-    pendingItem = {
-      id: msg.id,
-      uri: msg.uri,
-      name: msg.name,
-      size: msg.size,
-    };
-    viewer.setBusy(true, `Reading ${pendingItem.name}...`);
-    vscode.postMessage({ type: 'readFile', id: pendingItem.id, uri: pendingItem.uri });
-  } else if (msg?.type === 'fileBytes' && pendingItem?.id === msg.id) {
-    try {
-      pendingItem.bytes = bytesFromMessage(msg.bytes);
-      if (!pendingItem.bytes.byteLength) {
-        throw new Error(`Received 0 bytes for ${pendingItem.name}`);
-      }
-      viewer.open(pendingItem);
-    } catch (err) {
-      viewer.setBusy(false);
-      reportError(`Failed to open ${pendingItem.name}`, err);
-      viewer.setStatus(String(err?.message ?? err), true);
-    }
+    viewer.open({ id: msg.id, name: msg.name, size: msg.size, readRange });
+  } else if (msg?.type === 'rangeBytes') {
+    const request = ranges.get(msg.id);
+    if (!request) return;
+    ranges.delete(msg.id);
+    clearTimeout(request.timer);
+    if (msg.error) request.reject(new Error(msg.error));
+    else request.resolve(bytesFromMessage(msg.bytes));
   } else if (msg?.type === 'error') {
     const err = new Error(msg.message || 'VS Code extension error');
     viewer.setBusy(false);
@@ -61,4 +50,16 @@ function bytesFromMessage(bytes) {
   if (bytes instanceof ArrayBuffer) return new Uint8Array(bytes);
   if (ArrayBuffer.isView(bytes)) return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   return new Uint8Array(bytes);
+}
+
+function readRange(offset, length) {
+  return new Promise((resolve, reject) => {
+    const id = ++nextRangeId;
+    const timer = setTimeout(() => {
+      ranges.delete(id);
+      reject(new Error('File range request timed out'));
+    }, 30000);
+    ranges.set(id, { resolve, reject, timer });
+    vscode.postMessage({ type: 'readRange', id, offset, length });
+  });
 }

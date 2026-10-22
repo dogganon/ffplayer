@@ -13,6 +13,8 @@
     "serve": "npm run serve -w @ffplayer/browser",
     "clean": "npm run clean --workspaces --if-present",
     "vscode:package": "npm run package -w app/vscode",
-    "vscode:publish": "npm run vscode:publish -w app/vscode"
+    "vscode:publish": "npm run vscode:publish -w app/vscode",
+    "test": "node --test tests/streaming.test.cjs",
+    "test:wasm": "node --test tests/wasm-io.test.cjs"
   }
 }

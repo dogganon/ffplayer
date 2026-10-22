@@ -84,6 +84,8 @@ target_link_options(ffplayer_wasm PRIVATE
   "-sEXPORT_NAME=createFFplayer"
   "-sEXPORTED_RUNTIME_METHODS=['HEAPU8']"
   "-sALLOW_MEMORY_GROWTH=1"
+  "-sASYNCIFY=1"
+  "-sASYNCIFY_STACK_SIZE=65536"
   "-sENVIRONMENT=web,worker,node"
 )
 

@@ -26,7 +26,7 @@ using emscripten::val;
 
 namespace {
 
-struct MemoryReader {
+struct RangeReader {
     val data = val::undefined();
     std::int64_t size = 0;
     std::int64_t pos = 0;
@@ -48,13 +48,16 @@ std::runtime_error av_error(const char* what, int err) {
 }
 
 int read_packet(void* opaque, std::uint8_t* dst, int dst_size) {
-    auto& r = *static_cast<MemoryReader*>(opaque);
+    auto& r = *static_cast<RangeReader*>(opaque);
     if (r.pos >= r.size) {
         return AVERROR_EOF;
     }
     const auto remaining = r.size - r.pos;
-    const int n = static_cast<int>(std::min<std::int64_t>(remaining, dst_size));
-    val chunk = r.data.call<val>("subarray", static_cast<double>(r.pos), static_cast<double>(r.pos + n));
+    const int requested = static_cast<int>(std::min<std::int64_t>(remaining, dst_size));
+    val chunk = r.data.call<val>("read", static_cast<double>(r.pos), requested).await();
+    if (chunk.isNull() || chunk.isUndefined()) return AVERROR(EIO);
+    const int n = chunk["byteLength"].as<int>();
+    if (n <= 0 || n > requested) return AVERROR(EIO);
     val heap = val::module_property("HEAPU8");
     heap.call<void>("set", chunk, reinterpret_cast<std::uintptr_t>(dst));
     r.pos += n;
@@ -62,7 +65,7 @@ int read_packet(void* opaque, std::uint8_t* dst, int dst_size) {
 }
 
 std::int64_t seek(void* opaque, std::int64_t offset, int whence) {
-    auto& r = *static_cast<MemoryReader*>(opaque);
+    auto& r = *static_cast<RangeReader*>(opaque);
     if (whence == AVSEEK_SIZE) {
         return r.size;
     }
@@ -79,12 +82,12 @@ std::int64_t seek(void* opaque, std::int64_t offset, int whence) {
     return next;
 }
 
-MemoryReader make_memory_reader(const val& uint8_array) {
-    const auto size = static_cast<std::int64_t>(uint8_array["byteLength"].as<double>());
+RangeReader make_range_reader(const val& source) {
+    const auto size = static_cast<std::int64_t>(source["size"].as<double>());
     if (size <= 0) {
         throw std::invalid_argument("input is empty");
     }
-    return MemoryReader{uint8_array, size, 0};
+    return RangeReader{source, size, 0};
 }
 
 val bytes_to_uint8_array(const std::uint8_t* data, std::size_t size) {
@@ -247,8 +250,8 @@ void drain_decoder(DecoderState& state, const AVStream* stream, double timeline_
 
 }  // namespace
 
-static val decode_js(const val& uint8_array) {
-    MemoryReader reader = make_memory_reader(uint8_array);
+static val decode_js(const val& source) {
+    RangeReader reader = make_range_reader(source);
 
     constexpr int io_buffer_size = 32 * 1024;
     auto* io_buffer = static_cast<std::uint8_t*>(av_malloc(io_buffer_size));
@@ -374,8 +377,10 @@ static val decode_js(const val& uint8_array) {
 
 class DecodeSession {
 public:
-    explicit DecodeSession(const val& uint8_array)
-        : reader_{make_memory_reader(uint8_array)} {
+    explicit DecodeSession(const val& source)
+        : reader_{make_range_reader(source)} {}
+
+    void open() {
         auto* io_buffer = static_cast<std::uint8_t*>(av_malloc(32 * 1024));
         if (!io_buffer) throw std::bad_alloc();
         io_ = avio_alloc_context(io_buffer, 32 * 1024, 0, &reader_, &read_packet, nullptr, &seek);
@@ -438,10 +443,7 @@ public:
                 done_ = true;
                 break;
             }
-            if (ret < 0) {
-                done_ = true;
-                break;
-            }
+            if (ret < 0) throw av_error("av_read_frame failed", ret);
             if (pkt_->stream_index >= 0 && pkt_->stream_index < static_cast<int>(decoders_.size())) {
                 auto& decoder = decoders_[static_cast<std::size_t>(pkt_->stream_index)];
                 if (decoder.ctx && avcodec_send_packet(decoder.ctx, pkt_) >= 0) {
@@ -596,7 +598,7 @@ private:
         return o;
     }
 
-    MemoryReader reader_;
+    RangeReader reader_;
     AVIOContext* io_ = nullptr;
     AVFormatContext* fmt_ = nullptr;
     AVPacket* pkt_ = nullptr;
@@ -615,6 +617,7 @@ EMSCRIPTEN_BINDINGS(ffplayer_module) {
     emscripten::function("decode", &decode_js);
     emscripten::class_<DecodeSession>("DecodeSession")
         .constructor<const val&>()
+        .function("open", &DecodeSession::open)
         .function("info", &DecodeSession::info)
         .function("read", &DecodeSession::read)
         .function("seek", &DecodeSession::seek_to);

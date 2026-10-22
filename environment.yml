@@ -14,7 +14,8 @@ dependencies:
   - pybind11
 
   # Browser / WebAssembly build
-  - emscripten
+  # 4.0.9 in conda-forge depends on Binaryen 117 but requires 123.
+  - emscripten=3.1.58
   - nodejs
 
   # Building FFmpeg for Wasm

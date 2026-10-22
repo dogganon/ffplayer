@@ -1,5 +1,6 @@
 const vscode = require('vscode');
-const MAX_READ_BYTES = 256 * 1024 * 1024;
+const fs = require('node:fs/promises');
+const MAX_RANGE_BYTES = 256 * 1024;
 const SETTINGS_KEY = 'ffplayer.viewer.settings.v1';
 
 function activate(context) {
@@ -38,6 +39,9 @@ class FFplayerMediaViewer {
         try {
           const settings = this.context.globalState.get(SETTINGS_KEY);
           if (settings) await webview.postMessage({ type: 'settings', settings });
+          if (document.uri.scheme !== 'file') {
+            throw new Error('Range reads require a filesystem file. For remote files, run ffplayer in the remote workspace extension host.');
+          }
           const stat = await vscode.workspace.fs.stat(document.uri);
           webview.postMessage({
             type: 'media',
@@ -52,19 +56,29 @@ class FFplayerMediaViewer {
         }
       } else if (message?.type === 'settingsChanged') {
         await this.context.globalState.update(SETTINGS_KEY, message.settings);
-      } else if (message?.type === 'readFile') {
+      } else if (message?.type === 'readRange') {
+        let file;
         try {
-          const uri = vscode.Uri.parse(message.uri);
-          const stat = await vscode.workspace.fs.stat(uri);
-          if (stat.size > MAX_READ_BYTES) {
-            throw new Error(`File is ${formatBytes(stat.size)}; this build currently limits VS Code reads to ${formatBytes(MAX_READ_BYTES)} to keep the extension host responsive.`);
+          const { offset, length } = message;
+          if (document.uri.scheme !== 'file' || !Number.isSafeInteger(offset) || offset < 0 ||
+              !Number.isSafeInteger(length) || length <= 0 || length > MAX_RANGE_BYTES) {
+            throw new Error('Invalid file range request');
           }
-          const bytes = await vscode.workspace.fs.readFile(uri);
-          const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-          webview.postMessage({ type: 'fileBytes', id: message.id, bytes: buffer, size: bytes.byteLength });
+          // Only the editor's own document is readable through this bridge.
+          file = await fs.open(document.uri.fsPath, 'r');
+          const bytes = Buffer.alloc(length);
+          let total = 0;
+          while (total < length) {
+            const { bytesRead } = await file.read(bytes, total, length - total, offset + total);
+            if (!bytesRead) break;
+            total += bytesRead;
+          }
+          await webview.postMessage({ type: 'rangeBytes', id: message.id,
+            bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + total) });
         } catch (err) {
-          console.error('Failed to read media document', err);
-          webview.postMessage({ type: 'error', message: String(err?.message ?? err) });
+          await webview.postMessage({ type: 'rangeBytes', id: message.id, error: String(err?.message ?? err) });
+        } finally {
+          await file?.close();
         }
       }
     });
@@ -93,17 +107,6 @@ class FFplayerMediaViewer {
 function basename(path) {
   const slash = path.lastIndexOf('/');
   return slash >= 0 ? path.slice(slash + 1) : path;
-}
-
-function formatBytes(bytes) {
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(unit ? 1 : 0)} ${units[unit]}`;
 }
 
 function deactivate() {}
