@@ -100,12 +100,14 @@ Reload VS Code after installing.
 
 ### Release versioning
 
-ffplayer uses one root package version for the browser build, VS Code extension, and git tag. Use plain `major.minor.patch` versions:
+ffplayer uses one root package version for the browser build, VS Code extension, and git tag. Use plain `major.minor.patch` versions, for example:
 
 ```bash
-npm version <version> --workspaces --include-workspace-root --allow-same-version
+npm run version -- v0.1.4
 git push origin main --tags
 ```
+
+Replace `v0.1.4` with the desired version. The `version:bump` script runs `npm version` with `--workspaces --include-workspace-root --allow-same-version`.
 
 `npm version` updates the root `package.json` and workspace package manifests, creates the release commit, and creates a tag such as `v0.1.1`.
 

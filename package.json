@@ -15,6 +15,7 @@
     "vscode:package": "npm run package -w app/vscode",
     "vscode:publish": "npm run vscode:publish -w app/vscode",
     "test": "node --test tests/streaming.test.cjs",
-    "test:wasm": "node --test tests/wasm-io.test.cjs"
+    "test:wasm": "node --test tests/wasm-io.test.cjs",
+    "version": "npm version --workspaces --include-workspace-root --allow-same-version"
   }
 }
