@@ -458,7 +458,7 @@ public:
 
     void seek_to(double seconds) {
         if (!fmt_) return;
-        const auto timestamp = static_cast<std::int64_t>(seconds * AV_TIME_BASE);
+        const auto timestamp = static_cast<std::int64_t>((seconds + timeline_start_) * AV_TIME_BASE);
         int ret = av_seek_frame(fmt_, -1, timestamp, AVSEEK_FLAG_BACKWARD);
         if (ret < 0) {
             throw av_error("av_seek_frame failed", ret);

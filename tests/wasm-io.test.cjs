@@ -170,3 +170,29 @@ test('browser runtime initializes inside a Blob URL worker without resolving rel
   assert.equal(replies[0].error, undefined, replies[0].error?.message);
   assert.ok(replies[0].result.version);
 });
+
+test('Wasm seeking accounts for a nonzero media timeline origin', async () => {
+  const { execFileSync } = require('node:child_process');
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ffplayer-offset-'));
+  let session;
+  try {
+    const filename = path.join(directory, 'offset.mp4');
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+      'testsrc2=size=64x48:rate=10', '-t', '3', '-c:v', 'mpeg4', '-g', '1',
+      '-output_ts_offset', '10', '-y', filename]);
+    const bytes = await fs.readFile(filename);
+    const { default: createFFplayer } = await import(pathToFileURL(path.resolve('app/browser/dist/ffplayer.mjs')));
+    const av = await createFFplayer();
+    session = new av.DecodeSession({ size: bytes.length, async read(offset, length) {
+      return new Uint8Array(bytes.subarray(offset, offset + length));
+    } });
+    await session.open();
+    await session.seek(1.25);
+    const batch = await session.read();
+    const frame = batch.chunks.find(chunk => chunk.type === 'video');
+    assert.ok(frame && Math.abs(frame.time - 1.2) < 0.01, `Expected frame at 1.2, got ${frame?.time}`);
+  } finally {
+    session?.delete();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});

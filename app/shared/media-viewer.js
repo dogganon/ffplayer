@@ -70,9 +70,49 @@ export class MediaViewer {
       overlay: this.root.querySelector('.loading-overlay'),
       overlayText: this.root.querySelector('.loading-text'),
     };
+    this.els.time.innerHTML = `<input class="timestamp" type="text" value="0:00" disabled
+      aria-label="Playback timestamp" title="Seconds, M:SS or H:MM:SS, including fractional seconds; press Enter to seek" />
+      <span class="duration">/ unknown</span>
+      <label class="timestamp-precision-control">Decimals
+        <select class="timestamp-precision" aria-label="Timestamp decimal places">
+          ${Array.from({ length: 7 }, (_, digits) => `<option value="${digits}">${digits}</option>`).join('')}
+        </select>
+      </label>`;
+    this.els.timestamp = this.els.time.querySelector('.timestamp');
+    this.els.duration = this.els.time.querySelector('.duration');
+    this.els.timestampPrecision = this.els.time.querySelector('.timestamp-precision');
+    this.els.timestampPrecision.addEventListener('change', () => {
+      this.settings.timestampPrecision = Number(this.els.timestampPrecision.value);
+      this.applyTimestampPrecision();
+      this.persistSettings();
+    });
+    const input = this.els.timestamp;
+    input.addEventListener('input', () => input.setCustomValidity(''));
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        input.setCustomValidity('');
+        input.blur();
+        this.player?.updateControls();
+      }
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      const time = parseTimestamp(input.value);
+      if (time == null) {
+        input.setCustomValidity('Enter seconds, M:SS or H:MM:SS; fractional seconds are supported.');
+        input.reportValidity();
+        return;
+      }
+      input.setCustomValidity('');
+      input.blur();
+      this.player?.seek(time);
+    });
+    input.addEventListener('blur', () => {
+      input.setCustomValidity('');
+      this.player?.updateControls();
+    });
     this.els.play.addEventListener('click', () => {
       if (!this.player) return;
-      this.player.playing ? this.player.pause() : this.player.play();
+      (this.player.playing || this.player.resumeAfterSeek) ? this.player.pause() : this.player.play();
     });
     this.els.stop.addEventListener('click', () => this.player?.stop());
     this.els.stepBack.addEventListener('click', () => this.player?.seekBy(-5));
@@ -87,6 +127,16 @@ export class MediaViewer {
       this.settings.playbackRate = rate;
       this.persistSettings();
       this.player?.setPlaybackRate(rate);
+    });
+    this.els.playbackRate.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.els.playbackRate.dispatchEvent(new Event('change'));
+        this.els.playbackRate.blur();
+      } else if (event.key === 'Escape') {
+        this.els.playbackRate.value = String(this.settings.playbackRate);
+        this.els.playbackRate.blur();
+      }
     });
     this.els.autoplay.addEventListener('change', () => {
       this.settings.autoplay = this.els.autoplay.checked;
@@ -120,6 +170,7 @@ export class MediaViewer {
     this.els.tileScale.value = String(this.settings.tileScale);
     this.applyViewMode();
     this.applyTileScale();
+    this.applyTimestampPrecision();
   }
 
   applySettings(settings) {
@@ -131,7 +182,17 @@ export class MediaViewer {
     this.els.tileScale.value = String(this.settings.tileScale);
     this.applyViewMode();
     this.applyTileScale();
+    this.applyTimestampPrecision();
     this.player?.setPlaybackRate(this.settings.playbackRate);
+  }
+
+  applyTimestampPrecision() {
+    if (!this.els.timestamp) return;
+    const digits = this.settings.timestampPrecision;
+    this.els.timestampPrecision.value = String(digits);
+    this.els.timestamp.style.width = `${9 + (digits ? digits + 1 : 0)}ch`;
+    if (this.player) this.player.updateControls();
+    else this.els.timestamp.value = formatTimestamp(0, digits);
   }
 
   applyTileScale() {
@@ -215,6 +276,7 @@ export class MediaViewer {
   }
 
   setControlsEnabled(enabled) {
+    if (this.els.timestamp) this.els.timestamp.disabled = !enabled;
     for (const control of [
       this.els.play,
       this.els.stop,
@@ -391,6 +453,7 @@ class StreamingPlayer {
     this.done = false;
     this.startWall = 0;
     this.offset = 0;
+    this.decodedUntil = 0;
     this.raf = 0;
     this.pumpPending = false;
     this.generation = 0;
@@ -447,11 +510,11 @@ class StreamingPlayer {
       bytes += source.buffer.length * source.buffer.numberOfChannels * 4;
       ahead = Math.max(ahead, source.mediaEnd - now);
     }
-    return bytes >= 64 * 1024 * 1024 || ahead >= 2;
+    return bytes >= 64 * 1024 * 1024 || ahead >= 2 * this.playbackRate;
   }
 
   async pump() {
-    if (this.destroyed || this.done || this.pumpPending || this.bufferFull()) return;
+    if (this.destroyed || this.seeking || this.done || this.pumpPending || this.bufferFull()) return;
     const generation = this.generation;
     this.pumpPending = true;
     try {
@@ -459,9 +522,12 @@ class StreamingPlayer {
       if (generation !== this.generation) return;
       this.done = batch.done;
       for (const chunk of batch.chunks) {
+        this.recordDecodedTime(chunk);
         this.tracks.get(chunk.stream)?.push(chunk);
       }
+      if (this.done) for (const track of this.tracks.values()) track.seekTarget = null;
       if (this.playing) this.scheduleAudio();
+      else for (const track of this.tracks.values()) track.render(this.offset);
     } catch (err) {
       if (generation !== this.generation) return;
       reportError('Failed while decoding media', err);
@@ -476,9 +542,21 @@ class StreamingPlayer {
   }
 
   async play() {
+    if (this.playing || this.destroyed) return;
+    if (this.done && this.duration && this.offset >= this.duration) {
+      this.resumeAfterSeek = true;
+      await this.seek(0);
+      return;
+    }
+    if (this.seeking) {
+      this.resumeAfterSeek = true;
+      this.updateControls();
+      return;
+    }
     if (this.needsSeek) {
+      this.resumeAfterSeek = true;
       await this.seek(this.offset);
-      if (this.needsSeek) return;
+      return;
     }
     if (this.destroyed) return;
     audioContext ||= new AudioContext();
@@ -501,6 +579,7 @@ class StreamingPlayer {
   }
 
   pause() {
+    this.resumeAfterSeek = false;
     if (this.playing) {
       this.offset = this.currentPlaybackTime();
       this.needsSeek = true;
@@ -524,26 +603,62 @@ class StreamingPlayer {
   async seek(time) {
     const max = this.duration || Math.max(this.offset, 0);
     const target = clamp(time, 0, max);
-    const wasPlaying = this.playing;
+    const wasPlaying = this.playing || this.resumeAfterSeek;
     this.pause();
+    this.seeking = true;
+    this.resumeAfterSeek = wasPlaying;
     const generation = ++this.generation;
-    for (const track of this.tracks.values()) track.clear();
+    for (const track of this.tracks.values()) {
+      track.clear();
+      track.seekTarget = target;
+    }
     this.offset = target;
+    this.decodedUntil = target;
     this.startWall = performance.now() / 1000 - this.offset / this.playbackRate;
     this.updateControls();
     try {
       await this.session.seek(target);
       if (generation !== this.generation) return;
       this.done = false;
+      // FFmpeg seeks to an earlier keyframe. Decode forward with the clock
+      // stopped before displaying the requested position or resuming playback.
+      const pending = new Set([...this.tracks.values()].filter(track =>
+        track.stream.decodable && ['video', 'audio'].includes(track.stream.type)));
+      while (pending.size && !this.done && !this.bufferFull()) {
+        const batch = await this.session.read();
+        if (generation !== this.generation) return;
+        this.done = batch.done;
+        for (const chunk of batch.chunks) {
+          this.recordDecodedTime(chunk);
+          const track = this.tracks.get(chunk.stream);
+          if (!track) continue;
+          track.push(chunk);
+          const end = chunk.type === 'audio'
+            ? chunk.time + chunk.samples.length / chunk.channels / chunk.sampleRate
+            : chunk.time;
+          if (end > target || (chunk.type === 'video' && end === target)) pending.delete(track);
+        }
+      }
+      if (generation !== this.generation) return;
+      for (const track of this.tracks.values()) {
+        if (this.done) track.seekTarget = null;
+        track.render(target);
+      }
       this.needsSeek = false;
     } catch (err) {
       if (generation !== this.generation) return;
+      this.seeking = false;
+      this.resumeAfterSeek = false;
+      this.updateControls();
       reportError(`Failed to seek ${this.item.name}`, err);
       this.viewer.setStatus(String(err?.message ?? err), true);
       return;
     }
+    this.seeking = false;
+    const resume = this.resumeAfterSeek;
+    this.resumeAfterSeek = false;
     this.pump();
-    if (wasPlaying) await this.play();
+    if (resume) await this.play();
   }
 
   async setPlaybackRate(rate) {
@@ -555,13 +670,30 @@ class StreamingPlayer {
     const target = this.currentPlaybackTime();
     const wasPlaying = this.playing;
     this.playbackRate = rate;
+    this.startWall = performance.now() / 1000 - target / rate;
     this.updateControls();
     if (wasPlaying) await this.seek(target);
   }
 
+  recordDecodedTime(chunk) {
+    const end = chunk.type === 'audio'
+      ? chunk.time + chunk.samples.length / chunk.channels / chunk.sampleRate
+      : chunk.time;
+    if (Number.isFinite(end)) this.decodedUntil = Math.max(this.decodedUntil, end);
+  }
+
   currentPlaybackTime() {
     if (!this.playing) return this.offset;
-    return (performance.now() / 1000 - this.startWall) * this.playbackRate;
+    const now = performance.now() / 1000;
+    const time = (now - this.startWall) * this.playbackRate;
+    // If decoding falls behind, wait at the available media instead of letting
+    // the clock reach EOF and dropping the remainder of the video.
+    const available = Math.max(this.offset, this.decodedUntil ?? this.offset);
+    if (!this.done && time > available) {
+      this.startWall = now - available / this.playbackRate;
+      return available;
+    }
+    return time;
   }
 
   tick() {
@@ -573,9 +705,13 @@ class StreamingPlayer {
     this.scheduleAudio();
     this.pump();
     this.updateControls();
-    if (this.duration && this.offset >= this.duration) {
+    if (this.done && this.duration && this.offset >= this.duration) {
       if (this.viewer.settings.autoloop) this.seek(0);
-      else this.stop();
+      else {
+        this.pause();
+        this.offset = this.duration;
+        this.updateControls();
+      }
       return;
     }
     this.raf = requestAnimationFrame(() => this.tick());
@@ -618,11 +754,20 @@ class StreamingPlayer {
   }
 
   updateControls() {
-    this.viewer.els.play.textContent = this.playing ? 'Pause' : 'Play';
+    this.viewer.els.play.textContent = (this.playing || this.resumeAfterSeek) ? 'Pause' : 'Play';
     this.viewer.els.timeline.max = String(this.duration || Math.max(this.offset, 0));
     this.viewer.els.timeline.value = String(this.offset);
-    this.viewer.els.playbackRate.value = String(this.playbackRate);
-    this.viewer.els.time.textContent = `${formatDuration(this.offset)} / ${formatDuration(this.duration)}`;
+    if (document.activeElement !== this.viewer.els.playbackRate) {
+      this.viewer.els.playbackRate.value = String(this.playbackRate);
+    }
+    if (this.viewer.els.timestamp) {
+      if (document.activeElement !== this.viewer.els.timestamp) {
+        this.viewer.els.timestamp.value = formatTimestamp(this.offset, this.viewer.settings.timestampPrecision);
+      }
+      this.viewer.els.duration.textContent = `/ ${formatDuration(this.duration)}`;
+    } else {
+      this.viewer.els.time.textContent = `${formatDuration(this.offset)} / ${formatDuration(this.duration)}`;
+    }
   }
 }
 
@@ -649,9 +794,13 @@ class TrackView {
   push(chunk) {
     if (chunk.type === 'video') {
       this.video.push(chunk);
-      this.note.textContent = `${formatDuration(chunk.time)}`;
-      if (this.video.length === 1) this.render(0);
+      this.note.textContent = '';
+      if (this.seekTarget != null) {
+        while (this.video.length > 1 && this.video[1].time <= this.seekTarget) this.video.shift();
+      }
     } else if (chunk.type === 'audio') {
+      const end = chunk.time + chunk.samples.length / chunk.channels / chunk.sampleRate;
+      if (this.seekTarget != null && end <= this.seekTarget) return;
       this.audio.push(chunk);
       this.note.textContent = `${this.audio.length} chunk${this.audio.length === 1 ? '' : 's'}`;
     }
@@ -659,6 +808,8 @@ class TrackView {
 
   render(time) {
     if (!this.ctx || !this.video.length) return;
+    if (this.seekTarget != null && this.video.at(-1).time < this.seekTarget) return;
+    this.seekTarget = null;
     let index = 0;
     while (index + 1 < this.video.length && this.video[index + 1].time <= time) index += 1;
     if (index > 0) this.video.splice(0, index);
@@ -889,6 +1040,7 @@ function normalizeSettings(value) {
   return {
     version: 1,
     playbackRate: Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1,
+    timestampPrecision: Number.isInteger(source.timestampPrecision) && source.timestampPrecision >= 0 && source.timestampPrecision <= 6 ? source.timestampPrecision : 3,
     autoplay: Boolean(source.autoplay),
     autoloop: Boolean(source.autoloop),
     viewMode: normalizeViewMode(source.viewMode),
@@ -900,6 +1052,7 @@ function settingsSnapshot(settings) {
   return {
     version: 1,
     playbackRate: settings.playbackRate,
+    timestampPrecision: settings.timestampPrecision,
     autoplay: settings.autoplay,
     autoloop: settings.autoloop,
     viewMode: settings.viewMode,
@@ -909,4 +1062,24 @@ function settingsSnapshot(settings) {
 
 function normalizeViewMode(value) {
   return ['width', 'page', 'actual'].includes(value) ? value : 'width';
+}
+
+function parseTimestamp(value) {
+  const text = value.trim();
+  if (!/^\d+(?::\d{1,2}){0,2}(?:\.\d+)?$/.test(text)) return null;
+  const parts = text.split(':').map(Number);
+  if (parts.slice(1).some(part => part >= 60)) return null;
+  const seconds = parts.reduce((total, part) => total * 60 + part, 0);
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+function formatTimestamp(seconds, precision = 3) {
+  const digits = Number.isInteger(precision) && precision >= 0 && precision <= 6 ? precision : 3;
+  const value = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  // Round only the displayed value, carrying into minutes/hours at boundaries.
+  const [integer, fraction] = value.toFixed(digits).split('.');
+  const whole = Number(integer);
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor(whole / 60) % 60;
+  return `${hours ? `${hours}:${pad(minutes)}` : minutes}:${pad(whole % 60)}${fraction ? `.${fraction}` : ''}`;
 }
