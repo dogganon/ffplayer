@@ -1,7 +1,7 @@
 {
   "name": "ffplayer-monorepo",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "workspaces": [
     "app/browser",
     "app/vscode",
@@ -16,6 +16,6 @@
     "vscode:publish": "npm run vscode:publish -w app/vscode",
     "test": "node --test tests/streaming.test.cjs tests/browser.test.cjs",
     "test:wasm": "node --test tests/wasm-io.test.cjs",
-    "version": "npm version --workspaces --include-workspace-root --allow-same-version"
+    "version": "npm version --workspaces --include-workspace-root --allow-same-version --no-git-tag-version"
   }
 }

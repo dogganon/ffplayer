@@ -104,18 +104,17 @@ Reload VS Code after installing.
 
 ### Release versioning
 
-ffplayer uses one root package version for the browser build, VS Code extension, and git tag. Use plain `major.minor.patch` versions, for example:
+Bump, commit, tag, and push a release:
 
 ```bash
-npm run version -- v0.1.4
-git push origin main --tags
+npm run version -- v0.1.6
+git add .
+git commit -m "0.1.6"
+git tag -a v0.1.6
+git push --tags
 ```
 
-Replace `v0.1.4` with the desired version. The `version:bump` script runs `npm version` with `--workspaces --include-workspace-root --allow-same-version`.
-
-`npm version` updates the root `package.json` and workspace package manifests, creates the release commit, and creates a tag such as `v0.1.1`.
-
-The VS Code Marketplace does not accept prerelease SemVer strings such as `0.1.0-alpha.0`. Prerelease publishing is controlled by the `vsce --pre-release` flag, not by a version suffix. Publishing the same version twice is rejected by the Marketplace, so every Marketplace upload needs a new global release version.
+Replace `0.1.6` with a new `major.minor.patch` version.
 
 Publish an alpha build to the VS Code Marketplace:
 
@@ -123,7 +122,7 @@ Publish an alpha build to the VS Code Marketplace:
 VSCE_PAT=<publisher-token> npm run vscode:publish
 ```
 
-For GitHub Actions, add a repository secret named `VSCE_PAT`, then run the **Publish VS Code Extension** workflow or push a `v*` tag. The workflow builds the Wasm assets and publishes the VS Code alpha. Make sure `publisher` in `app/vscode/package.json` matches your Marketplace publisher id before publishing.
+For GitHub Actions, set the `VSCE_PAT` repository secret and your Marketplace publisher ID in `app/vscode/package.json`. Push a `v*` tag or run **Publish VS Code Extension** to publish an alpha build.
 
 ## VS Code Remote
 
