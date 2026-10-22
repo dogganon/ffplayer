@@ -102,7 +102,8 @@ code --install-extension app/vscode/dist-package/ffplayer-0.1.0.vsix
 
 Reload VS Code after installing.
 
-### Release versioning
+### Release versioninggit push && git push --tags
+
 
 Bump, commit, tag, and push a release:
 
@@ -111,7 +112,7 @@ npm run version -- v0.1.6
 git add .
 git commit -m "0.1.6"
 git tag -a v0.1.6
-git push --tags
+git push && git push --tags
 ```
 
 Replace `0.1.6` with a new `major.minor.patch` version.
